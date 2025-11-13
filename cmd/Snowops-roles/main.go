@@ -21,7 +21,7 @@ func main() {
 	database.Migrate()
 	port := os.Getenv("APP_PORT")
 	if port == "" {
-		port = "8080"
+		port = "7070"
 	}
 
 	address := port
@@ -35,14 +35,8 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	authMode := os.Getenv("AUTH_MODE")
-
 	rolesGroup := router.Group("/roles")
-	if strings.ToLower(authMode) == "jwt" {
-		rolesGroup.Use(middleware.JWTAuthMiddleware())
-	} else {
-		rolesGroup.Use(middleware.MockAuthMiddleware())
-	}
+	rolesGroup.Use(middleware.JWTAuthMiddleware())
 	handlers.RegisterRoutes(rolesGroup)
 
 	log.Printf("starting server on port %s", port)
