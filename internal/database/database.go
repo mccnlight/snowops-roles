@@ -1,7 +1,6 @@
 package database
 
 import (
-	"fmt"
 	"log"
 	"os"
 
@@ -21,31 +20,10 @@ func Init() {
 		log.Fatalf("не удалось загрузить .env файл: %v", err)
 	}
 
-	required := []string{
-		"DB_HOST",
-		"DB_PORT",
-		"DB_USER",
-		"DB_PASSWORD",
-		"DB_NAME",
+	dsn := os.Getenv("DB_DSN")
+	if dsn == "" {
+		log.Fatalf("переменная окружения DB_DSN не установлена")
 	}
-
-	config := make(map[string]string, len(required))
-	for _, key := range required {
-		value := os.Getenv(key)
-		if value == "" {
-			log.Fatalf("переменная окружения %s не установлена", key)
-		}
-		config[key] = value
-	}
-
-	dsn := fmt.Sprintf(
-		"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Asia/Almaty",
-		config["DB_HOST"],
-		config["DB_USER"],
-		config["DB_PASSWORD"],
-		config["DB_NAME"],
-		config["DB_PORT"],
-	)
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
