@@ -322,7 +322,90 @@ func GetOrganization(c *gin.Context) {
 }
 
 func UpdateOrganization(c *gin.Context) {
-	c.JSON(200, gin.H{"message": "not implemented yet"})
+	role := c.GetString("currentUserRole")
+	currentOrgID := c.GetString("currentOrgID")
+
+	if role == "" || currentOrgID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	currentOrgUUID, err := uuid.Parse(currentOrgID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid current organization id"})
+		return
+	}
+
+	targetID := c.Param("id")
+	orgUUID, err := uuid.Parse(targetID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid organization id"})
+		return
+	}
+
+	if database.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database not initialized"})
+		return
+	}
+
+	var org models.Organization
+	if err := database.DB.Where("id = ? AND is_active = ?", orgUUID, true).First(&org).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch organization"})
+		}
+		return
+	}
+
+	// Проверка прав доступа
+	switch role {
+	case models.RoleAkimatAdmin:
+	case models.RoleTooAdmin:
+		if org.ID != currentOrgUUID {
+			if org.Type != models.OrgTypeContractor || org.ParentOrgID == nil || *org.ParentOrgID != currentOrgUUID {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+		}
+	case models.RoleContractorAdmin:
+		if org.ID != currentOrgUUID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
+	case models.RoleDriver:
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	default:
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	var body struct {
+		Name         *string `json:"name"`
+		Type         *string `json:"type"`
+		BIN          *string `json:"bin"`
+		HeadFullName *string `json:"head_full_name"`
+		Address      *string `json:"address"`
+		Phone        *string `json:"phone"`
+	}
+
+	if err := c.BindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+
+	if err := database.DB.Model(&org).Updates(body).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update organization"})
+		return
+	}
+
+	if err := database.DB.Where("id = ?", orgUUID).First(&org).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch updated organization"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"organization": org})
 }
 
 func DeleteOrganization(c *gin.Context) {
@@ -525,7 +608,113 @@ func GetUser(c *gin.Context) {
 }
 
 func UpdateUser(c *gin.Context) {
-	c.JSON(200, gin.H{"message": "not implemented yet"})
+	if database.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database not initialized"})
+		return
+	}
+
+	role := c.GetString("currentUserRole")
+	currentUserID := c.GetString("currentUserID")
+	currentOrgID := c.GetString("currentOrgID")
+
+	if role == "" || currentUserID == "" || currentOrgID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	targetID := c.Param("id")
+	targetUUID, err := uuid.Parse(targetID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	var user models.User
+	if err := database.DB.Where("id = ? AND is_active = ?", targetUUID, true).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed"})
+		}
+		return
+	}
+
+	currentUserUUID, err := uuid.Parse(currentUserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid current user id"})
+		return
+	}
+
+	currentOrgUUID, err := uuid.Parse(currentOrgID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid current organization id"})
+		return
+	}
+
+	// Проверка прав доступа
+	if user.ID != currentUserUUID {
+		if !canAccessUser(role, currentOrgUUID, &user) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+			return
+		}
+	}
+
+	var body struct {
+		Phone          *string    `json:"phone"`
+		Login          *string    `json:"login"`
+		Password       *string    `json:"password"`
+		Role           *string    `json:"role"`
+		OrganizationID *uuid.UUID `json:"organization_id"`
+		DriverID       *uuid.UUID `json:"driver_id"`
+	}
+
+	if err := c.BindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+
+	updateData := make(map[string]interface{})
+	if body.Phone != nil {
+		updateData["phone"] = *body.Phone
+	}
+	if body.Login != nil {
+		updateData["login"] = *body.Login
+	}
+	if body.Password != nil {
+		hashed, err := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+			return
+		}
+		passwordHash := string(hashed)
+		updateData["password_hash"] = passwordHash
+	}
+	if body.Role != nil {
+		updateData["role"] = *body.Role
+	}
+	if body.OrganizationID != nil {
+		updateData["organization_id"] = *body.OrganizationID
+	}
+	if body.DriverID != nil {
+		updateData["driver_id"] = *body.DriverID
+	}
+
+	if len(updateData) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
+		return
+	}
+
+	if err := database.DB.Model(&user).Updates(updateData).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db update failed"})
+		return
+	}
+
+	if err := database.DB.Where("id = ?", targetUUID).First(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"user": user})
 }
 
 func ListDrivers(c *gin.Context) {
