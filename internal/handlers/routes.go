@@ -82,7 +82,7 @@ func ListOrganizations(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch organizations"})
 			return
 		}
-	case models.RoleKguAdmin:
+	case models.RoleKguZkhAdmin:
 		var currentOrg models.Organization
 		if err := database.DB.Where("id = ? AND is_active = ?", currentOrgUUID, true).First(&currentOrg).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -102,7 +102,7 @@ func ListOrganizations(c *gin.Context) {
 		}
 
 		orgs = append(orgs, contractors...)
-	case models.RoleContractorAdmin:
+	case models.RoleTooAdmin, models.RoleContractorAdmin:
 		var currentOrg models.Organization
 		if err := database.DB.Where("id = ? AND is_active = ?", currentOrgUUID, true).First(&currentOrg).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -194,7 +194,9 @@ func CreateOrganization(c *gin.Context) {
 	var adminRole string
 	switch req.Type {
 	case models.OrgTypeKgu:
-		adminRole = models.RoleKguAdmin
+		adminRole = models.RoleKguZkhAdmin
+	case models.OrgTypeToo:
+		adminRole = models.RoleTooAdmin
 	case models.OrgTypeContractor:
 		adminRole = models.RoleContractorAdmin
 	default:
@@ -298,14 +300,14 @@ func GetOrganization(c *gin.Context) {
 
 	switch role {
 	case models.RoleAkimatAdmin:
-	case models.RoleKguAdmin:
+	case models.RoleKguZkhAdmin:
 		if org.ID != currentOrgUUID {
 			if org.Type != models.OrgTypeContractor || org.ParentOrgID == nil || *org.ParentOrgID != currentOrgUUID {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
 		}
-	case models.RoleContractorAdmin:
+	case models.RoleTooAdmin, models.RoleContractorAdmin:
 		if org.ID != currentOrgUUID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
@@ -361,14 +363,14 @@ func UpdateOrganization(c *gin.Context) {
 	// Проверка прав доступа
 	switch role {
 	case models.RoleAkimatAdmin:
-	case models.RoleKguAdmin:
+	case models.RoleKguZkhAdmin:
 		if org.ID != currentOrgUUID {
 			if org.Type != models.OrgTypeContractor || org.ParentOrgID == nil || *org.ParentOrgID != currentOrgUUID {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
 		}
-	case models.RoleContractorAdmin:
+	case models.RoleTooAdmin, models.RoleContractorAdmin:
 		if org.ID != currentOrgUUID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
@@ -447,14 +449,14 @@ func DeleteOrganization(c *gin.Context) {
 
 	switch role {
 	case models.RoleAkimatAdmin:
-	case models.RoleKguAdmin:
+	case models.RoleKguZkhAdmin:
 		if org.ID != currentOrgUUID {
 			if org.Type != models.OrgTypeContractor || org.ParentOrgID == nil || *org.ParentOrgID != currentOrgUUID {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
 		}
-	case models.RoleContractorAdmin:
+	case models.RoleTooAdmin, models.RoleContractorAdmin:
 		if org.ID != currentOrgUUID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
@@ -745,7 +747,7 @@ func ListDrivers(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch drivers"})
 			return
 		}
-	case models.RoleKguAdmin:
+	case models.RoleKguZkhAdmin:
 		contractorIDs, err := contractorIDsForKgu(currentOrgUUID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve contractor organizations"})
@@ -1009,7 +1011,7 @@ func CanAccessDriver(role, currentOrgID, contractorOrgID string) bool {
 	if role == "AKIMAT_ADMIN" {
 		return true
 	}
-	if role == models.RoleKguAdmin && contractorOrgID != "" {
+	if role == models.RoleKguZkhAdmin && contractorOrgID != "" {
 		return true
 	}
 	if role == "CONTRACTOR_ADMIN" && currentOrgID == contractorOrgID {
@@ -1022,7 +1024,7 @@ func canAccessUser(role string, currentOrgID uuid.UUID, user *models.User) bool 
 	switch role {
 	case models.RoleAkimatAdmin:
 		return true
-	case models.RoleKguAdmin:
+	case models.RoleKguZkhAdmin:
 		// allow users belonging to current KGU or its contractors
 		if user.OrganizationID != nil && *user.OrganizationID == currentOrgID {
 			return true
@@ -1038,7 +1040,7 @@ func canAccessUser(role string, currentOrgID uuid.UUID, user *models.User) bool 
 		if org.ParentOrgID != nil && *org.ParentOrgID == currentOrgID {
 			return true
 		}
-	case models.RoleContractorAdmin:
+	case models.RoleTooAdmin, models.RoleContractorAdmin:
 		if user.OrganizationID != nil && *user.OrganizationID == currentOrgID {
 			return true
 		}

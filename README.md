@@ -62,7 +62,7 @@ go run cmd/Snowops-roles/main.go
     {
       "id": "uuid",
       "name": "Название организации",
-      "type": "KGU" | "CONTRACTOR" | "AKIMAT",
+      "type": "KGU" | "TOO" | "CONTRACTOR" | "AKIMAT",
       "bin": "123456789012",
       "headFullName": "ФИО руководителя",
       "address": "Адрес",
@@ -78,7 +78,8 @@ go run cmd/Snowops-roles/main.go
 
 **Доступ:**
 - `AKIMAT_ADMIN`: все активные организации
-- `KGU_ADMIN`: своя организация + подрядчики
+- `KGU_ZKH_ADMIN`: своя организация + подрядчики
+- `TOO_ADMIN`: только своя организация
 - `CONTRACTOR_ADMIN`: только своя организация
 - `DRIVER`: запрещено
 
@@ -91,7 +92,7 @@ go run cmd/Snowops-roles/main.go
 ```json
 {
   "name": "Название организации",        // обязательно
-  "type": "KGU" | "CONTRACTOR",          // обязательно
+  "type": "KGU" | "TOO" | "CONTRACTOR",  // обязательно
   "bin": "123456789012",
   "headFullName": "ФИО руководителя",
   "address": "Адрес",
@@ -108,7 +109,7 @@ go run cmd/Snowops-roles/main.go
   "organization": {
     "id": "uuid",
     "name": "Название организации",
-    "type": "KGU" | "CONTRACTOR",
+    "type": "KGU" | "TOO" | "CONTRACTOR",
     "bin": "123456789012",
     "headFullName": "ФИО руководителя",
     "address": "Адрес",
@@ -121,7 +122,7 @@ go run cmd/Snowops-roles/main.go
   "admin": {
     "id": "uuid",
     "phone": "+77001234567",
-    "role": "KGU_ADMIN" | "CONTRACTOR_ADMIN",
+    "role": "KGU_ZKH_ADMIN" | "TOO_ADMIN" | "CONTRACTOR_ADMIN",
     "organizationID": "uuid",
     "isActive": true,
     "createdAt": "2024-01-01T00:00:00Z",
@@ -131,8 +132,8 @@ go run cmd/Snowops-roles/main.go
 ```
 
 **Доступ:**
-- `AKIMAT_ADMIN`: может создавать KGU
-- `KGU_ADMIN`: может создавать CONTRACTOR
+- `AKIMAT_ADMIN`: может создавать KGU или TOO
+- `KGU_ZKH_ADMIN`: может создавать CONTRACTOR
 - Остальные: запрещено
 
 ---
@@ -148,7 +149,7 @@ go run cmd/Snowops-roles/main.go
   "organization": {
     "id": "uuid",
     "name": "Название организации",
-    "type": "KGU" | "CONTRACTOR" | "AKIMAT",
+      "type": "KGU" | "TOO" | "CONTRACTOR" | "AKIMAT",
     "bin": "123456789012",
     "headFullName": "ФИО руководителя",
     "address": "Адрес",
@@ -163,7 +164,7 @@ go run cmd/Snowops-roles/main.go
 
 **Доступ:**
 - `AKIMAT_ADMIN`: любая организация
-- `KGU_ADMIN`: своя организация или подрядчики
+- `KGU_ZKH_ADMIN`: своя организация или подрядчики
 - `CONTRACTOR_ADMIN`: только своя организация
 - `DRIVER`: запрещено
 
@@ -205,7 +206,7 @@ go run cmd/Snowops-roles/main.go
 
 **Доступ:**
 - `AKIMAT_ADMIN`: любая организация
-- `KGU_ADMIN`: своя организация или подрядчики
+- `KGU_ZKH_ADMIN`: своя организация или подрядчики
 - `CONTRACTOR_ADMIN`: только своя организация
 - `DRIVER`: запрещено
 
@@ -220,7 +221,7 @@ go run cmd/Snowops-roles/main.go
 
 **Доступ:**
 - `AKIMAT_ADMIN`: любая организация
-- `KGU_ADMIN`: своя организация или подрядчики
+- `KGU_ZKH_ADMIN`: своя организация или подрядчики
 - `CONTRACTOR_ADMIN`: только своя организация
 - `DRIVER`: запрещено
 
@@ -241,7 +242,7 @@ go run cmd/Snowops-roles/main.go
   "user": {
     "id": "uuid",
     "phone": "+77001234567",
-    "role": "AKIMAT_ADMIN" | "KGU_ADMIN" | "CONTRACTOR_ADMIN" | "DRIVER",
+    "role": "AKIMAT_ADMIN" | "KGU_ZKH_ADMIN" | "CONTRACTOR_ADMIN" | "DRIVER",
     "login": "login" | null,
     "passwordHash": null,
     "organizationID": "uuid" | null,
@@ -266,7 +267,7 @@ go run cmd/Snowops-roles/main.go
   "user": {
     "id": "uuid",
     "phone": "+77001234567",
-    "role": "AKIMAT_ADMIN" | "KGU_ADMIN" | "CONTRACTOR_ADMIN" | "DRIVER",
+    "role": "AKIMAT_ADMIN" | "KGU_ZKH_ADMIN" | "CONTRACTOR_ADMIN" | "DRIVER",
     "login": "login" | null,
     "passwordHash": null,
     "organizationID": "uuid" | null,
@@ -281,7 +282,7 @@ go run cmd/Snowops-roles/main.go
 **Доступ:**
 - Любой пользователь: может получить свои данные
 - `AKIMAT_ADMIN`: любой пользователь
-- `KGU_ADMIN`: пользователи своей организации и подрядчиков
+- `KGU_ZKH_ADMIN`: пользователи своей организации и подрядчиков
 - `CONTRACTOR_ADMIN`: пользователи своей организации
 
 ---
@@ -295,7 +296,7 @@ go run cmd/Snowops-roles/main.go
   "phone": "+77001234568",
   "login": "новый_логин",
   "password": "новый_пароль",
-  "role": "KGU_ADMIN" | "CONTRACTOR_ADMIN" | "DRIVER",
+  "role": "KGU_ZKH_ADMIN" | "CONTRACTOR_ADMIN" | "DRIVER",
   "organization_id": "uuid",
   "driver_id": "uuid"
 }
@@ -307,7 +308,7 @@ go run cmd/Snowops-roles/main.go
   "user": {
     "id": "uuid",
     "phone": "+77001234568",
-    "role": "KGU_ADMIN",
+    "role": "KGU_ZKH_ADMIN",
     "login": "новый_логин",
     "passwordHash": null,
     "organizationID": "uuid",
@@ -324,7 +325,7 @@ go run cmd/Snowops-roles/main.go
 **Доступ:**
 - Любой пользователь: может обновить свои данные
 - `AKIMAT_ADMIN`: любой пользователь
-- `KGU_ADMIN`: пользователи своей организации и подрядчиков
+- `KGU_ZKH_ADMIN`: пользователи своей организации и подрядчиков
 - `CONTRACTOR_ADMIN`: пользователи своей организации
 
 ---
@@ -357,7 +358,7 @@ go run cmd/Snowops-roles/main.go
 
 **Доступ:**
 - `AKIMAT_ADMIN`: все активные водители
-- `KGU_ADMIN`: водители своей организации и подрядчиков
+- `KGU_ZKH_ADMIN`: водители своей организации и подрядчиков
 - `CONTRACTOR_ADMIN`: водители своей организации
 - `DRIVER`: запрещено
 
@@ -431,7 +432,7 @@ go run cmd/Snowops-roles/main.go
 
 **Доступ:**
 - `AKIMAT_ADMIN`: любой водитель
-- `KGU_ADMIN`: водители подрядчиков
+- `KGU_ZKH_ADMIN`: водители подрядчиков
 - `CONTRACTOR_ADMIN`: водители своей организации
 
 ---
@@ -468,7 +469,7 @@ go run cmd/Snowops-roles/main.go
 
 **Доступ:**
 - `AKIMAT_ADMIN`: любой водитель
-- `KGU_ADMIN`: водители подрядчиков
+- `KGU_ZKH_ADMIN`: водители подрядчиков
 - `CONTRACTOR_ADMIN`: водители своей организации
 
 ---
@@ -482,7 +483,7 @@ go run cmd/Snowops-roles/main.go
 
 **Доступ:**
 - `AKIMAT_ADMIN`: любой водитель
-- `KGU_ADMIN`: водители подрядчиков
+- `KGU_ZKH_ADMIN`: водители подрядчиков
 - `CONTRACTOR_ADMIN`: водители своей организации
 
 ---
@@ -491,13 +492,15 @@ go run cmd/Snowops-roles/main.go
 
 ### Роли пользователей
 - `AKIMAT_ADMIN` - администратор акимата (высший уровень доступа)
-- `KGU_ADMIN` - администратор КГУ
+- `KGU_ZKH_ADMIN` - администратор КГУ
+- `TOO_ADMIN` - техническое ТОО (полигоны и камеры)
 - `CONTRACTOR_ADMIN` - администратор подрядчика
 - `DRIVER` - водитель
 
 ### Типы организаций
 - `AKIMAT` - акимат
 - `KGU` - КГУ (коммунальное государственное учреждение)
+- `TOO` - техническое ТОО
 - `CONTRACTOR` - подрядчик
 
 ## Аутентификация

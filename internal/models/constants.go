@@ -3,7 +3,8 @@ package models
 // Роли пользователей.
 const (
 	RoleAkimatAdmin     = "AKIMAT_ADMIN"
-	RoleKguAdmin        = "KGU_ADMIN"
+	RoleKguZkhAdmin     = "KGU_ZKH_ADMIN"
+	RoleTooAdmin        = "TOO_ADMIN"
 	RoleContractorAdmin = "CONTRACTOR_ADMIN"
 	RoleDriver          = "DRIVER"
 )
@@ -12,13 +13,14 @@ const (
 const (
 	OrgTypeAkimat     = "AKIMAT"
 	OrgTypeKgu        = "KGU"
+	OrgTypeToo        = "TOO"
 	OrgTypeContractor = "CONTRACTOR"
 )
 
 // IsAdmin проверяет, относится ли роль к административным.
 func IsAdmin(role string) bool {
 	switch role {
-	case RoleAkimatAdmin, RoleKguAdmin, RoleContractorAdmin:
+	case RoleAkimatAdmin, RoleKguZkhAdmin, RoleTooAdmin, RoleContractorAdmin:
 		return true
 	default:
 		return false
@@ -29,8 +31,8 @@ func IsAdmin(role string) bool {
 func CanCreateOrganization(role, orgType string) bool {
 	switch role {
 	case RoleAkimatAdmin:
-		return orgType == OrgTypeKgu
-	case RoleKguAdmin:
+		return orgType == OrgTypeKgu || orgType == OrgTypeToo
+	case RoleKguZkhAdmin:
 		return orgType == OrgTypeContractor
 	default:
 		return false
@@ -44,7 +46,11 @@ func IsAkimatAdmin(role string) bool {
 
 // IsKguAdmin проверяет, является ли роль администратором КГУ.
 func IsKguAdmin(role string) bool {
-	return role == RoleKguAdmin
+	return role == RoleKguZkhAdmin
+}
+
+func IsTooAdmin(role string) bool {
+	return role == RoleTooAdmin
 }
 
 // IsContractorAdmin проверяет, является ли роль администратором подрядчика.
