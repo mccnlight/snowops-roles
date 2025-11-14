@@ -10,7 +10,7 @@ type Organization struct {
 	ID           uuid.UUID     `gorm:"type:uuid;default:uuid_generate_v4();primaryKey"`
 	Name         string        `gorm:"type:varchar(255)"`
 	Type         string        `gorm:"type:varchar(50)"`
-	BIN          string        `gorm:"type:varchar(32)"`
+	BIN          string        `gorm:"type:varchar(32);uniqueIndex"`
 	HeadFullName string        `gorm:"type:varchar(255)"`
 	Address      string        `gorm:"type:varchar(255)"`
 	Phone        string        `gorm:"type:varchar(32)"`
@@ -73,6 +73,7 @@ type Vehicle struct {
 	BodyVolumeM3 float64       `gorm:"type:decimal(10,2)"`
 	DriverID     *uuid.UUID    `gorm:"type:uuid"`
 	Driver       *Driver       `gorm:"foreignKey:DriverID;constraint:OnDelete:SET NULL"`
+	PhotoURL     *string       `gorm:"type:text"`
 	IsActive     bool          `gorm:"default:true"`
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
@@ -81,4 +82,3 @@ type Vehicle struct {
 func (Vehicle) TableName() string {
 	return "vehicles"
 }
-

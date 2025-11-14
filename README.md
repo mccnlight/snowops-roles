@@ -62,7 +62,7 @@ go run cmd/Snowops-roles/main.go
     {
       "id": "uuid",
       "name": "Название организации",
-      "type": "KGU" | "TOO" | "CONTRACTOR" | "AKIMAT",
+      "type": "KGU_ZKH" | "TOO" | "CONTRACTOR" | "AKIMAT",
       "bin": "123456789012",
       "headFullName": "ФИО руководителя",
       "address": "Адрес",
@@ -92,7 +92,7 @@ go run cmd/Snowops-roles/main.go
 ```json
 {
   "name": "Название организации",        // обязательно
-  "type": "KGU" | "TOO" | "CONTRACTOR",  // обязательно
+  "type": "KGU_ZKH" | "TOO" | "CONTRACTOR",  // обязательно
   "bin": "123456789012",
   "headFullName": "ФИО руководителя",
   "address": "Адрес",
@@ -109,7 +109,7 @@ go run cmd/Snowops-roles/main.go
   "organization": {
     "id": "uuid",
     "name": "Название организации",
-    "type": "KGU" | "TOO" | "CONTRACTOR",
+    "type": "KGU_ZKH" | "TOO" | "CONTRACTOR",
     "bin": "123456789012",
     "headFullName": "ФИО руководителя",
     "address": "Адрес",
@@ -132,7 +132,7 @@ go run cmd/Snowops-roles/main.go
 ```
 
 **Доступ:**
-- `AKIMAT_ADMIN`: может создавать KGU или TOO
+- `AKIMAT_ADMIN`: может создавать KGU_ZKH или TOO
 - `KGU_ZKH_ADMIN`: может создавать CONTRACTOR
 - Остальные: запрещено
 
@@ -149,7 +149,7 @@ go run cmd/Snowops-roles/main.go
   "organization": {
     "id": "uuid",
     "name": "Название организации",
-      "type": "KGU" | "TOO" | "CONTRACTOR" | "AKIMAT",
+      "type": "KGU_ZKH" | "TOO" | "CONTRACTOR" | "AKIMAT",
     "bin": "123456789012",
     "headFullName": "ФИО руководителя",
     "address": "Адрес",
@@ -177,7 +177,7 @@ go run cmd/Snowops-roles/main.go
 ```json
 {
   "name": "Новое название",
-  "type": "KGU" | "CONTRACTOR",
+  "type": "KGU_ZKH" | "CONTRACTOR",
   "bin": "123456789013",
   "head_full_name": "Новое ФИО руководителя",
   "address": "Новый адрес",
@@ -191,7 +191,7 @@ go run cmd/Snowops-roles/main.go
   "organization": {
     "id": "uuid",
     "name": "Новое название",
-    "type": "KGU" | "CONTRACTOR",
+    "type": "KGU_ZKH" | "CONTRACTOR",
     "bin": "123456789013",
     "headFullName": "Новое ФИО руководителя",
     "address": "Новый адрес",
@@ -488,18 +488,96 @@ go run cmd/Snowops-roles/main.go
 
 ---
 
+### Транспорт (Vehicles)
+
+#### GET /roles/vehicles?only_active=true
+Получить список транспорта.
+
+**Доступ:**
+- `AKIMAT_ADMIN`: весь транспорт
+- `KGU_ZKH_ADMIN`: транспорт своих подрядчиков
+- `CONTRACTOR_ADMIN`: транспорт своей организации
+
+```json
+{
+  "vehicles": [
+    {
+      "id": "0c0c4b4a-5b3e-4c39-b5e5-a3b19a2f1593",
+      "contractor_id": "2a1d0a26-7b3d-4132-8f2e-7acd2f4b0da8",
+      "plate_number": "777ABC01",
+      "brand": "KamAZ",
+      "model": "6520",
+      "color": "Orange",
+      "year": 2022,
+      "body_volume_m3": 12.5,
+      "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1",
+      "photo_url": "https://cdn.example.com/trucks/777abc01.jpg",
+      "is_active": true,
+      "created_at": "2025-01-10T07:30:00Z",
+      "updated_at": "2025-01-15T08:00:00Z"
+    }
+  ]
+}
+```
+
+#### POST /roles/vehicles
+Создаёт транспорт (только `CONTRACTOR_ADMIN`).
+
+```json
+{
+  "plate_number": "888XYZ01",
+  "brand": "HOWO",
+  "model": "T5G",
+  "color": "Blue",
+  "year": 2021,
+  "body_volume_m3": 10.2,
+  "photo_url": "https://cdn.example.com/trucks/888xyz01.jpg",
+  "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1"
+}
+```
+
+```json
+{
+  "vehicle": {
+    "id": "dd9f1a44-54a0-4c7b-9a40-0c59f4b91d2a",
+    "...": "..."
+  }
+}
+```
+
+#### GET /roles/vehicles/:id
+Подробнее о транспортном средстве. Доступ как в `GET /roles/vehicles`.
+
+#### PATCH /roles/vehicles/:id
+Изменить свойства транспорта или привязать водителя.
+
+```json
+{
+  "color": "White",
+  "body_volume_m3": 11.0,
+  "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1"   // пустая строка — чтобы отвязать
+}
+```
+
+Успешный ответ возвращает обновлённый объект.
+
+#### DELETE /roles/vehicles/:id
+Soft-delete: `is_active = false`, привязанный водитель снимается. Доступ только у `CONTRACTOR_ADMIN`.
+
+---
+
 ## Роли и типы организаций
 
 ### Роли пользователей
 - `AKIMAT_ADMIN` - администратор акимата (высший уровень доступа)
-- `KGU_ZKH_ADMIN` - администратор КГУ
+- `KGU_ZKH_ADMIN` - администратор KGU ZKH
 - `TOO_ADMIN` - техническое ТОО (полигоны и камеры)
 - `CONTRACTOR_ADMIN` - администратор подрядчика
 - `DRIVER` - водитель
 
 ### Типы организаций
 - `AKIMAT` - акимат
-- `KGU` - КГУ (коммунальное государственное учреждение)
+- `KGU_ZKH` - KGU ZKH (муниципальная организация ЖКХ)
 - `TOO` - техническое ТОО
 - `CONTRACTOR` - подрядчик
 

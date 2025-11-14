@@ -12,7 +12,7 @@ const (
 // Типы организаций.
 const (
 	OrgTypeAkimat     = "AKIMAT"
-	OrgTypeKgu        = "KGU"
+	OrgTypeKguZkh     = "KGU_ZKH"
 	OrgTypeToo        = "TOO"
 	OrgTypeContractor = "CONTRACTOR"
 )
@@ -31,7 +31,7 @@ func IsAdmin(role string) bool {
 func CanCreateOrganization(role, orgType string) bool {
 	switch role {
 	case RoleAkimatAdmin:
-		return orgType == OrgTypeKgu || orgType == OrgTypeToo
+		return orgType == OrgTypeKguZkh || orgType == OrgTypeToo
 	case RoleKguZkhAdmin:
 		return orgType == OrgTypeContractor
 	default:
