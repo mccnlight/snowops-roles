@@ -82,7 +82,7 @@ func ListOrganizations(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch organizations"})
 			return
 		}
-	case models.RoleTooAdmin:
+	case models.RoleKguAdmin:
 		var currentOrg models.Organization
 		if err := database.DB.Where("id = ? AND is_active = ?", currentOrgUUID, true).First(&currentOrg).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -193,8 +193,8 @@ func CreateOrganization(c *gin.Context) {
 
 	var adminRole string
 	switch req.Type {
-	case models.OrgTypeToo:
-		adminRole = models.RoleTooAdmin
+	case models.OrgTypeKgu:
+		adminRole = models.RoleKguAdmin
 	case models.OrgTypeContractor:
 		adminRole = models.RoleContractorAdmin
 	default:
@@ -298,7 +298,7 @@ func GetOrganization(c *gin.Context) {
 
 	switch role {
 	case models.RoleAkimatAdmin:
-	case models.RoleTooAdmin:
+	case models.RoleKguAdmin:
 		if org.ID != currentOrgUUID {
 			if org.Type != models.OrgTypeContractor || org.ParentOrgID == nil || *org.ParentOrgID != currentOrgUUID {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
@@ -361,7 +361,7 @@ func UpdateOrganization(c *gin.Context) {
 	// Проверка прав доступа
 	switch role {
 	case models.RoleAkimatAdmin:
-	case models.RoleTooAdmin:
+	case models.RoleKguAdmin:
 		if org.ID != currentOrgUUID {
 			if org.Type != models.OrgTypeContractor || org.ParentOrgID == nil || *org.ParentOrgID != currentOrgUUID {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
@@ -447,7 +447,7 @@ func DeleteOrganization(c *gin.Context) {
 
 	switch role {
 	case models.RoleAkimatAdmin:
-	case models.RoleTooAdmin:
+	case models.RoleKguAdmin:
 		if org.ID != currentOrgUUID {
 			if org.Type != models.OrgTypeContractor || org.ParentOrgID == nil || *org.ParentOrgID != currentOrgUUID {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
@@ -745,8 +745,8 @@ func ListDrivers(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch drivers"})
 			return
 		}
-	case models.RoleTooAdmin:
-		contractorIDs, err := contractorIDsForToo(currentOrgUUID)
+	case models.RoleKguAdmin:
+		contractorIDs, err := contractorIDsForKgu(currentOrgUUID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve contractor organizations"})
 			return
@@ -1009,7 +1009,7 @@ func CanAccessDriver(role, currentOrgID, contractorOrgID string) bool {
 	if role == "AKIMAT_ADMIN" {
 		return true
 	}
-	if role == "TOO_ADMIN" && contractorOrgID != "" {
+	if role == models.RoleKguAdmin && contractorOrgID != "" {
 		return true
 	}
 	if role == "CONTRACTOR_ADMIN" && currentOrgID == contractorOrgID {
@@ -1022,8 +1022,8 @@ func canAccessUser(role string, currentOrgID uuid.UUID, user *models.User) bool 
 	switch role {
 	case models.RoleAkimatAdmin:
 		return true
-	case models.RoleTooAdmin:
-		// allow users belonging to current TOO or its contractors
+	case models.RoleKguAdmin:
+		// allow users belonging to current KGU or its contractors
 		if user.OrganizationID != nil && *user.OrganizationID == currentOrgID {
 			return true
 		}
@@ -1046,9 +1046,9 @@ func canAccessUser(role string, currentOrgID uuid.UUID, user *models.User) bool 
 	return false
 }
 
-func contractorIDsForToo(tooID uuid.UUID) ([]uuid.UUID, error) {
+func contractorIDsForKgu(kguID uuid.UUID) ([]uuid.UUID, error) {
 	var orgs []models.Organization
-	if err := database.DB.Where("parent_org_id = ? AND type = ? AND is_active = ?", tooID, models.OrgTypeContractor, true).Find(&orgs).Error; err != nil {
+	if err := database.DB.Where("parent_org_id = ? AND type = ? AND is_active = ?", kguID, models.OrgTypeContractor, true).Find(&orgs).Error; err != nil {
 		return nil, err
 	}
 
