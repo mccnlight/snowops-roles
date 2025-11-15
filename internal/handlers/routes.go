@@ -501,8 +501,8 @@ func UpdateOrganization(c *gin.Context) {
 
 	if len(updates) > 0 {
 		if err := database.DB.Model(&org).Updates(updates).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update organization"})
-			return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update organization"})
+		return
 		}
 	}
 
@@ -1119,8 +1119,8 @@ func UpdateDriver(c *gin.Context) {
 
 	if len(updates) > 0 {
 		if err := database.DB.Model(&driver).Updates(updates).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db update failed"})
-			return
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db update failed"})
+		return
 		}
 	}
 
