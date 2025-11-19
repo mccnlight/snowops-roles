@@ -28,9 +28,9 @@ type CreateOrganizationRequest struct {
 }
 
 type CreateDriverRequest struct {
-	FullName  string `json:"full_name" binding:"required"`
+	FullName  string `json:"fullName" binding:"required"`
 	IIN       string `json:"iin" binding:"required"`
-	BirthYear int    `json:"birth_year" binding:"required"`
+	BirthYear int    `json:"birthYear" binding:"required"`
 	Phone     string `json:"phone" binding:"required"`
 }
 
@@ -501,8 +501,8 @@ func UpdateOrganization(c *gin.Context) {
 
 	if len(updates) > 0 {
 		if err := database.DB.Model(&org).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update organization"})
-		return
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update organization"})
+			return
 		}
 	}
 
@@ -1070,9 +1070,9 @@ func UpdateDriver(c *gin.Context) {
 	}
 
 	var body struct {
-		FullName  *string `json:"full_name"`
+		FullName  *string `json:"fullName"`
 		Phone     *string `json:"phone"`
-		BirthYear *int    `json:"birth_year"`
+		BirthYear *int    `json:"birthYear"`
 		IIN       *string `json:"iin"`
 	}
 
@@ -1119,8 +1119,8 @@ func UpdateDriver(c *gin.Context) {
 
 	if len(updates) > 0 {
 		if err := database.DB.Model(&driver).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "db update failed"})
-		return
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db update failed"})
+			return
 		}
 	}
 
