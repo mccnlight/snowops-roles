@@ -2032,6 +2032,9 @@ func generateRandomPassword(length int) (string, error) {
 }
 
 func purgeUser(tx *gorm.DB, user *models.User) error {
+	if err := tx.Exec("DELETE FROM user_sessions WHERE user_id = ?", user.ID).Error; err != nil {
+		return err
+	}
 	if user.DriverID != nil {
 		if err := tx.Model(&models.Vehicle{}).Where("driver_id = ?", *user.DriverID).Update("driver_id", nil).Error; err != nil {
 			return err
