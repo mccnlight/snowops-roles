@@ -1148,7 +1148,7 @@ func DeleteUser(c *gin.Context) {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed: " + err.Error()})
 		}
 		return
 	}
