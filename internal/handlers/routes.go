@@ -38,10 +38,12 @@ type CreateStaffUserRequest struct {
 }
 
 type CreateDriverRequest struct {
-	FullName  string `json:"fullName" binding:"required"`
-	IIN       string `json:"iin" binding:"required"`
-	BirthYear int    `json:"birthYear" binding:"required"`
-	Phone     string `json:"phone" binding:"required"`
+	FullName  string  `json:"fullName" binding:"required"`
+	IIN       string  `json:"iin" binding:"required"`
+	BirthYear int     `json:"birthYear" binding:"required"`
+	Phone     string  `json:"phone" binding:"required"`
+	Login     *string `json:"login"`
+	Password  *string `json:"password"`
 }
 
 type CreateVehicleRequest struct {
@@ -1336,11 +1338,63 @@ func CreateDriver(c *gin.Context) {
 	}
 
 	driverID := driver.ID
+	driverLogin := ""
+	if req.Login != nil {
+		driverLogin = strings.TrimSpace(*req.Login)
+	}
+	if driverLogin != "" {
+		loginInUse, err := userLoginExists(tx, driverLogin, nil)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate login"})
+			return
+		}
+		if loginInUse {
+			tx.Rollback()
+			c.JSON(http.StatusConflict, gin.H{"error": "login already in use"})
+			return
+		}
+	} else {
+		var err error
+		driverLogin, err = generateUniqueLogin(tx, driver.FullName)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate login"})
+			return
+		}
+	}
+
+	driverPassword := ""
+	if req.Password != nil {
+		driverPassword = strings.TrimSpace(*req.Password)
+	}
+	if driverPassword == "" {
+		var err error
+		driverPassword, err = generateRandomPassword(12)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate password"})
+			return
+		}
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(driverPassword), bcrypt.DefaultCost)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+		return
+	}
+
+	loginCopy := driverLogin
+	passwordHash := string(hashedPassword)
+
 	user := models.User{
 		Phone:          req.Phone,
 		Role:           models.RoleDriver,
 		OrganizationID: &contractorID,
 		DriverID:       &driverID,
+		Login:          &loginCopy,
+		PasswordHash:   &passwordHash,
 		IsActive:       true,
 	}
 
@@ -1359,14 +1413,16 @@ func CreateDriver(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"driver": driver,
 		"user": gin.H{
-			"id":             user.ID,
-			"phone":          user.Phone,
-			"role":           user.Role,
-			"organizationID": user.OrganizationID,
-			"driverID":       user.DriverID,
-			"isActive":       user.IsActive,
-			"createdAt":      user.CreatedAt,
-			"updatedAt":      user.UpdatedAt,
+			"id":                user.ID,
+			"phone":             user.Phone,
+			"role":              user.Role,
+			"organizationID":    user.OrganizationID,
+			"driverID":          user.DriverID,
+			"isActive":          user.IsActive,
+			"createdAt":         user.CreatedAt,
+			"updatedAt":         user.UpdatedAt,
+			"login":             user.Login,
+			"generatedPassword": driverPassword,
 		},
 	})
 }
