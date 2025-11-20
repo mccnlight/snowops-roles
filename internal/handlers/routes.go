@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strings"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -25,6 +28,13 @@ type CreateOrganizationRequest struct {
 	AdminFullName string `json:"admin_full_name"`
 	AdminPhone    string `json:"admin_phone"`
 	AdminPassword string `json:"admin_password"`
+	AdminLogin    string `json:"admin_login"`
+}
+
+type CreateStaffUserRequest struct {
+	Phone    string `json:"phone" binding:"required"`
+	Login    string `json:"login" binding:"required"`
+	Password string `json:"password" binding:"required"`
 }
 
 type CreateDriverRequest struct {
@@ -69,11 +79,25 @@ func RegisterRoutes(api *gin.RouterGroup) {
 	organizations.GET("/:id", GetOrganization)
 	organizations.PUT("/:id", UpdateOrganization)
 	organizations.DELETE("/:id", DeleteOrganization)
+	organizations.DELETE("/:id/purge", PurgeOrganization)
 
 	users := protected.Group("/users")
 	users.GET("", FindUser)
 	users.GET("/:id", GetUser)
 	users.PUT("/:id", UpdateUser)
+	users.DELETE("/:id", DeleteUser)
+
+	akimat := protected.Group("/akimat")
+	akimat.POST("/users", CreateAkimatUser)
+	akimat.GET("/users", ListAkimatUsers)
+
+	kgu := protected.Group("/kgu")
+	kgu.POST("/users", CreateKguUser)
+	kgu.GET("/users", ListKguUsers)
+
+	landfill := protected.Group("/landfill")
+	landfill.POST("/users", CreateLandfillUser)
+	landfill.GET("/users", ListLandfillUsers)
 
 	drivers := protected.Group("/drivers")
 	drivers.GET("", ListDrivers)
@@ -138,7 +162,7 @@ func ListOrganizations(c *gin.Context) {
 		}
 
 		orgs = append(orgs, contractors...)
-	case models.RoleTooAdmin, models.RoleContractorAdmin:
+	case models.RoleLandfillAdmin, models.RoleContractorAdmin:
 		var currentOrg models.Organization
 		if err := database.DB.Where("id = ? AND is_active = ?", currentOrgUUID, true).First(&currentOrg).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -177,7 +201,12 @@ func CreateOrganization(c *gin.Context) {
 	}
 
 	req.AdminPhone = strings.TrimSpace(req.AdminPhone)
-	if !models.CanCreateOrganization(currentUserRole, req.Type) {
+	orgType := normalizeOrgType(req.Type)
+	if orgType == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported organization type"})
+		return
+	}
+	if !models.CanCreateOrganization(currentUserRole, orgType) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
@@ -239,8 +268,21 @@ func CreateOrganization(c *gin.Context) {
 	}
 
 	parentOrgID := currentOrgUUID
+	if orgType == models.OrgTypeKguZkh {
+		exists, err := kguExistsForAkimat(tx, parentOrgID)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate kgu limit"})
+			return
+		}
+		if exists {
+			tx.Rollback()
+			c.JSON(http.StatusConflict, gin.H{"error": "kgu already exists for this akimat"})
+			return
+		}
+	}
 	org := models.Organization{
-		Type:         req.Type,
+		Type:         orgType,
 		Name:         req.Name,
 		BIN:          req.BIN,
 		HeadFullName: req.HeadFullName,
@@ -257,16 +299,57 @@ func CreateOrganization(c *gin.Context) {
 	}
 
 	var adminRole string
-	switch req.Type {
+	switch orgType {
 	case models.OrgTypeKguZkh:
 		adminRole = models.RoleKguZkhAdmin
-	case models.OrgTypeToo:
-		adminRole = models.RoleTooAdmin
+	case models.OrgTypeLandfill, models.OrgTypeToo:
+		adminRole = models.RoleLandfillAdmin
 	case models.OrgTypeContractor:
 		adminRole = models.RoleContractorAdmin
 	default:
 		tx.Rollback()
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported organization type"})
+		return
+	}
+
+	adminLogin := strings.TrimSpace(req.AdminLogin)
+	if adminLogin != "" {
+		inUse, err := userLoginExists(tx, adminLogin, nil)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate admin login"})
+			return
+		}
+		if inUse {
+			tx.Rollback()
+			c.JSON(http.StatusConflict, gin.H{"error": "admin login already in use"})
+			return
+		}
+	} else {
+		var err error
+		adminLogin, err = generateUniqueLogin(tx, req.Name)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate admin login"})
+			return
+		}
+	}
+
+	adminPlainPassword := strings.TrimSpace(req.AdminPassword)
+	if adminPlainPassword == "" {
+		var err error
+		adminPlainPassword, err = generateRandomPassword(12)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate admin password"})
+			return
+		}
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(adminPlainPassword), bcrypt.DefaultCost)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash admin password"})
 		return
 	}
 
@@ -276,17 +359,10 @@ func CreateOrganization(c *gin.Context) {
 		OrganizationID: &org.ID,
 		IsActive:       true,
 	}
-
-	if req.AdminPassword != "" {
-		hashed, err := bcrypt.GenerateFromPassword([]byte(req.AdminPassword), bcrypt.DefaultCost)
-		if err != nil {
-			tx.Rollback()
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
-			return
-		}
-		password := string(hashed)
-		user.PasswordHash = &password
-	}
+	userLogin := adminLogin
+	user.Login = &userLogin
+	passwordStr := string(hashedPassword)
+	user.PasswordHash = &passwordStr
 
 	if err := tx.Create(&user).Error; err != nil {
 		tx.Rollback()
@@ -315,15 +391,194 @@ func CreateOrganization(c *gin.Context) {
 			"updatedAt":    org.UpdatedAt,
 		},
 		"admin": gin.H{
-			"id":             user.ID,
-			"phone":          user.Phone,
-			"role":           user.Role,
-			"organizationID": user.OrganizationID,
-			"isActive":       user.IsActive,
-			"createdAt":      user.CreatedAt,
-			"updatedAt":      user.UpdatedAt,
+			"id":                user.ID,
+			"phone":             user.Phone,
+			"role":              user.Role,
+			"organizationID":    user.OrganizationID,
+			"isActive":          user.IsActive,
+			"createdAt":         user.CreatedAt,
+			"updatedAt":         user.UpdatedAt,
+			"login":             user.Login,
+			"generatedPassword": adminPlainPassword,
 		},
 	})
+}
+
+func CreateAkimatUser(c *gin.Context) {
+	if c.GetString("currentUserRole") != models.RoleAkimatAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	createOrganizationUser(c, models.RoleAkimatUser)
+}
+
+func ListAkimatUsers(c *gin.Context) {
+	if c.GetString("currentUserRole") != models.RoleAkimatAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	listOrganizationUsers(c, models.RoleAkimatUser)
+}
+
+func CreateKguUser(c *gin.Context) {
+	if c.GetString("currentUserRole") != models.RoleKguZkhAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	createOrganizationUser(c, models.RoleKguZkhUser)
+}
+
+func ListKguUsers(c *gin.Context) {
+	if c.GetString("currentUserRole") != models.RoleKguZkhAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	listOrganizationUsers(c, models.RoleKguZkhUser)
+}
+
+func CreateLandfillUser(c *gin.Context) {
+	if !models.IsLandfillAdmin(c.GetString("currentUserRole")) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	createOrganizationUser(c, models.RoleLandfillUser)
+}
+
+func ListLandfillUsers(c *gin.Context) {
+	if !models.IsLandfillAdmin(c.GetString("currentUserRole")) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	listOrganizationUsers(c, models.RoleLandfillUser)
+}
+
+func createOrganizationUser(c *gin.Context, role string) {
+	currentOrgID := c.GetString("currentOrgID")
+	if currentOrgID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	if database.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database not initialized"})
+		return
+	}
+
+	orgUUID, err := uuid.Parse(currentOrgID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid organization id"})
+		return
+	}
+
+	var req CreateStaffUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	phone := strings.TrimSpace(req.Phone)
+	login := strings.TrimSpace(req.Login)
+	password := strings.TrimSpace(req.Password)
+
+	if phone == "" || login == "" || password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "phone, login and password are required"})
+		return
+	}
+
+	tx := database.DB.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	inUse, err := userPhoneExists(tx, phone, nil)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate phone"})
+		return
+	}
+	if inUse {
+		tx.Rollback()
+		c.JSON(http.StatusConflict, gin.H{"error": "phone already in use"})
+		return
+	}
+
+	loginInUse, err := userLoginExists(tx, login, nil)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate login"})
+		return
+	}
+	if loginInUse {
+		tx.Rollback()
+		c.JSON(http.StatusConflict, gin.H{"error": "login already in use"})
+		return
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+		return
+	}
+
+	hashed := string(hashedPassword)
+	user := models.User{
+		Phone:          phone,
+		Role:           role,
+		Login:          &login,
+		PasswordHash:   &hashed,
+		OrganizationID: &orgUUID,
+		IsActive:       true,
+	}
+
+	if err := tx.Create(&user).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit transaction"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"user": user})
+}
+
+func listOrganizationUsers(c *gin.Context, role string) {
+	currentOrgID := c.GetString("currentOrgID")
+	if currentOrgID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	if database.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database not initialized"})
+		return
+	}
+
+	orgUUID, err := uuid.Parse(currentOrgID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid organization id"})
+		return
+	}
+
+	var users []models.User
+	if err := database.DB.Where("organization_id = ? AND role = ?", orgUUID, role).Find(&users).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch users"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"users": users})
 }
 
 func GetOrganization(c *gin.Context) {
@@ -367,12 +622,12 @@ func GetOrganization(c *gin.Context) {
 	case models.RoleAkimatAdmin:
 	case models.RoleKguZkhAdmin:
 		if org.ID != currentOrgUUID {
-			if org.Type != models.OrgTypeContractor || org.ParentOrgID == nil || *org.ParentOrgID != currentOrgUUID {
+			if !isManagedByKgu(org, currentOrgUUID) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
 		}
-	case models.RoleTooAdmin, models.RoleContractorAdmin:
+	case models.RoleLandfillAdmin, models.RoleContractorAdmin:
 		if org.ID != currentOrgUUID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
@@ -386,6 +641,49 @@ func GetOrganization(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"organization": org})
+}
+
+func PurgeOrganization(c *gin.Context) {
+	if database.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database not initialized"})
+		return
+	}
+
+	role := c.GetString("currentUserRole")
+	if !models.IsAkimatAdmin(role) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	targetID := c.Param("id")
+	orgUUID, err := uuid.Parse(targetID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid organization id"})
+		return
+	}
+
+	tx := database.DB.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+		return
+	}
+
+	if err := purgeOrganization(tx, orgUUID); err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to finalize purge"})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
 
 func UpdateOrganization(c *gin.Context) {
@@ -430,12 +728,12 @@ func UpdateOrganization(c *gin.Context) {
 	case models.RoleAkimatAdmin:
 	case models.RoleKguZkhAdmin:
 		if org.ID != currentOrgUUID {
-			if org.Type != models.OrgTypeContractor || org.ParentOrgID == nil || *org.ParentOrgID != currentOrgUUID {
+			if !isManagedByKgu(org, currentOrgUUID) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
 		}
-	case models.RoleTooAdmin, models.RoleContractorAdmin:
+	case models.RoleLandfillAdmin, models.RoleContractorAdmin:
 		if org.ID != currentOrgUUID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
@@ -555,12 +853,12 @@ func DeleteOrganization(c *gin.Context) {
 	case models.RoleAkimatAdmin:
 	case models.RoleKguZkhAdmin:
 		if org.ID != currentOrgUUID {
-			if org.Type != models.OrgTypeContractor || org.ParentOrgID == nil || *org.ParentOrgID != currentOrgUUID {
+			if !isManagedByKgu(org, currentOrgUUID) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
 		}
-	case models.RoleTooAdmin, models.RoleContractorAdmin:
+	case models.RoleLandfillAdmin, models.RoleContractorAdmin:
 		if org.ID != currentOrgUUID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
@@ -821,6 +1119,84 @@ func UpdateUser(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"user": user})
+}
+
+func DeleteUser(c *gin.Context) {
+	if database.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database not initialized"})
+		return
+	}
+
+	role := c.GetString("currentUserRole")
+	currentUserID := c.GetString("currentUserID")
+	currentOrgID := c.GetString("currentOrgID")
+
+	if role == "" || currentUserID == "" || currentOrgID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	targetID := c.Param("id")
+	targetUUID, err := uuid.Parse(targetID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	var user models.User
+	if err := database.DB.Where("id = ?", targetUUID).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed"})
+		}
+		return
+	}
+
+	currentOrgUUID, err := uuid.Parse(currentOrgID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid current organization id"})
+		return
+	}
+
+	withOrg := parseBool(c.Query("with_org"))
+	if withOrg && !models.IsAkimatAdmin(role) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	if user.ID.String() != currentUserID && !canAccessUser(role, currentOrgUUID, &user) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+
+	tx := database.DB.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+		return
+	}
+
+	orgID := user.OrganizationID
+	if err := purgeUser(tx, &user); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if withOrg && orgID != nil {
+		if err := purgeOrganization(tx, *orgID); err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to finalize delete"})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
 
 func ListDrivers(c *gin.Context) {
@@ -1572,6 +1948,186 @@ func userPhoneExists(db *gorm.DB, phone string, excludeID *uuid.UUID) (bool, err
 	return count > 0, nil
 }
 
+func userLoginExists(db *gorm.DB, login string, excludeID *uuid.UUID) (bool, error) {
+	if login == "" {
+		return false, nil
+	}
+	query := db.Model(&models.User{}).Where("login = ?", login)
+	if excludeID != nil {
+		query = query.Where("id <> ?", *excludeID)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func kguExistsForAkimat(db *gorm.DB, akimatID uuid.UUID) (bool, error) {
+	var count int64
+	if err := db.Model(&models.Organization{}).
+		Where("parent_org_id = ? AND type = ?", akimatID, models.OrgTypeKguZkh).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func generateUniqueLogin(db *gorm.DB, name string) (string, error) {
+	base := slugify(strings.ToLower(name))
+	if base == "" {
+		base = "user"
+	}
+	login := base
+	attempt := 1
+	for {
+		exists, err := userLoginExists(db, login, nil)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return login, nil
+		}
+		login = fmt.Sprintf("%s%d", base, attempt)
+		attempt++
+		if attempt > 1000 {
+			return "", fmt.Errorf("failed to generate unique login")
+		}
+	}
+}
+
+func slugify(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			continue
+		}
+		if unicode.IsSpace(r) || r == '-' || r == '_' {
+			b.WriteRune('_')
+		}
+	}
+	result := strings.Trim(b.String(), "_")
+	if result == "" {
+		return "user"
+	}
+	return result
+}
+
+func generateRandomPassword(length int) (string, error) {
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	if length <= 0 {
+		length = 12
+	}
+	var b strings.Builder
+	for i := 0; i < length; i++ {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return "", err
+		}
+		b.WriteByte(alphabet[n.Int64()])
+	}
+	return b.String(), nil
+}
+
+func purgeUser(tx *gorm.DB, user *models.User) error {
+	if user.DriverID != nil {
+		if err := tx.Model(&models.Vehicle{}).Where("driver_id = ?", *user.DriverID).Update("driver_id", nil).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ?", *user.DriverID).Delete(&models.Driver{}).Error; err != nil {
+			return err
+		}
+	}
+	return tx.Where("id = ?", user.ID).Delete(&models.User{}).Error
+}
+
+func purgeOrganization(tx *gorm.DB, orgID uuid.UUID) error {
+	var org models.Organization
+	if err := tx.Where("id = ?", orgID).First(&org).Error; err != nil {
+		return err
+	}
+
+	var childIDs []uuid.UUID
+	if err := tx.Model(&models.Organization{}).Where("parent_org_id = ?", orgID).Pluck("id", &childIDs).Error; err != nil {
+		return err
+	}
+	for _, childID := range childIDs {
+		if err := purgeOrganization(tx, childID); err != nil {
+			return err
+		}
+	}
+
+	if err := deleteVehiclesForOrg(tx, orgID); err != nil {
+		return err
+	}
+	if err := deleteDriversForOrg(tx, orgID); err != nil {
+		return err
+	}
+	if err := tx.Where("organization_id = ?", orgID).Delete(&models.User{}).Error; err != nil {
+		return err
+	}
+	return tx.Where("id = ?", orgID).Delete(&models.Organization{}).Error
+}
+
+func deleteVehiclesForOrg(tx *gorm.DB, orgID uuid.UUID) error {
+	return tx.Where("contractor_id = ?", orgID).Delete(&models.Vehicle{}).Error
+}
+
+func deleteDriversForOrg(tx *gorm.DB, orgID uuid.UUID) error {
+	var driverIDs []uuid.UUID
+	if err := tx.Model(&models.Driver{}).Where("contractor_id = ?", orgID).Pluck("id", &driverIDs).Error; err != nil {
+		return err
+	}
+	if len(driverIDs) == 0 {
+		return nil
+	}
+	if err := tx.Model(&models.Vehicle{}).Where("driver_id IN ?", driverIDs).Update("driver_id", nil).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("driver_id IN ?", driverIDs).Delete(&models.User{}).Error; err != nil {
+		return err
+	}
+	return tx.Where("id IN ?", driverIDs).Delete(&models.Driver{}).Error
+}
+
+func parseBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeOrgType(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case models.OrgTypeAkimat:
+		return models.OrgTypeAkimat
+	case models.OrgTypeKguZkh:
+		return models.OrgTypeKguZkh
+	case models.OrgTypeLandfill, models.OrgTypeToo:
+		return models.OrgTypeLandfill
+	case models.OrgTypeContractor:
+		return models.OrgTypeContractor
+	default:
+		return ""
+	}
+}
+
+func isManagedByKgu(org models.Organization, kguID uuid.UUID) bool {
+	if org.ParentOrgID == nil || *org.ParentOrgID != kguID {
+		return false
+	}
+	switch org.Type {
+	case models.OrgTypeContractor, models.OrgTypeLandfill, models.OrgTypeToo:
+		return true
+	default:
+		return false
+	}
+}
+
 func CanAccessDriver(role, currentOrgID, contractorOrgID string) bool {
 	if role == "AKIMAT_ADMIN" {
 		return true
@@ -1605,7 +2161,7 @@ func canAccessUser(role string, currentOrgID uuid.UUID, user *models.User) bool 
 		if org.ParentOrgID != nil && *org.ParentOrgID == currentOrgID {
 			return true
 		}
-	case models.RoleTooAdmin, models.RoleContractorAdmin:
+	case models.RoleLandfillAdmin, models.RoleContractorAdmin:
 		if user.OrganizationID != nil && *user.OrganizationID == currentOrgID {
 			return true
 		}
@@ -1635,7 +2191,7 @@ func roleManagementGuard() gin.HandlerFunc {
 			return
 		}
 
-		if role == models.RoleTooAdmin || role == models.RoleDriver {
+		if role == models.RoleDriver {
 			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			c.Abort()
 			return
