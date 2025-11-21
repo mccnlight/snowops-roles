@@ -1082,7 +1082,24 @@ func UpdateUser(c *gin.Context) {
 		updateData["phone"] = *body.Phone
 	}
 	if body.Login != nil {
-		updateData["login"] = *body.Login
+		newLogin := strings.TrimSpace(*body.Login)
+		if newLogin == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "login cannot be empty"})
+			return
+		}
+
+		// Проверяем уникальность логина (исключая текущего пользователя)
+		loginInUse, err := userLoginExists(database.DB, newLogin, &user.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate login"})
+			return
+		}
+		if loginInUse {
+			c.JSON(http.StatusConflict, gin.H{"error": "login already in use"})
+			return
+		}
+
+		updateData["login"] = newLogin
 	}
 	if body.Password != nil {
 		hashed, err := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
@@ -1337,8 +1354,8 @@ func CreateDriver(c *gin.Context) {
 
 	driverID := driver.ID
 
-	// Генерируем логин из имени водителя
-	driverLogin, err := generateUniqueLogin(tx, req.FullName)
+	// Генерируем логин из фамилии водителя (последнее слово ФИО)
+	driverLogin, err := generateDriverLogin(tx, req.FullName)
 	if err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate driver login"})
@@ -1482,7 +1499,38 @@ func UpdateDriver(c *gin.Context) {
 	updates := map[string]interface{}{}
 
 	if body.FullName != nil {
-		updates["full_name"] = strings.TrimSpace(*body.FullName)
+		newFullName := strings.TrimSpace(*body.FullName)
+		if newFullName == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "full name cannot be empty"})
+			return
+		}
+		updates["full_name"] = newFullName
+
+		// Обновляем логин при изменении имени, если существует пользователь водителя
+		if driverUserExists {
+			newLogin, err := generateDriverLogin(database.DB, newFullName)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate new login"})
+				return
+			}
+
+			// Проверяем, не занят ли новый логин (исключая текущего пользователя)
+			loginInUse, err := userLoginExists(database.DB, newLogin, &driverUser.ID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate login"})
+				return
+			}
+			if loginInUse {
+				c.JSON(http.StatusConflict, gin.H{"error": "login already in use"})
+				return
+			}
+
+			// Обновляем логин пользователя
+			if err := database.DB.Model(&models.User{}).Where("driver_id = ?", driver.ID).Update("login", newLogin).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update driver login"})
+				return
+			}
+		}
 	}
 	if body.BirthYear != nil {
 		updates["birth_year"] = *body.BirthYear
@@ -2036,6 +2084,73 @@ func slugify(value string) string {
 		return "user"
 	}
 	return result
+}
+
+// transliterate converts Cyrillic characters to Latin
+func transliterate(text string) string {
+	translitMap := map[rune]string{
+		'а': "a", 'б': "b", 'в': "v", 'г': "g", 'д': "d", 'е': "e", 'ё': "yo",
+		'ж': "zh", 'з': "z", 'и': "i", 'й': "y", 'к': "k", 'л': "l", 'м': "m",
+		'н': "n", 'о': "o", 'п': "p", 'р': "r", 'с': "s", 'т': "t", 'у': "u",
+		'ф': "f", 'х': "h", 'ц': "ts", 'ч': "ch", 'ш': "sh", 'щ': "sch",
+		'ъ': "", 'ы': "y", 'ь': "", 'э': "e", 'ю': "yu", 'я': "ya",
+		'А': "A", 'Б': "B", 'В': "V", 'Г': "G", 'Д': "D", 'Е': "E", 'Ё': "Yo",
+		'Ж': "Zh", 'З': "Z", 'И': "I", 'Й': "Y", 'К': "K", 'Л': "L", 'М': "M",
+		'Н': "N", 'О': "O", 'П': "P", 'Р': "R", 'С': "S", 'Т': "T", 'У': "U",
+		'Ф': "F", 'Х': "H", 'Ц': "Ts", 'Ч': "Ch", 'Ш': "Sh", 'Щ': "Sch",
+		'Ъ': "", 'Ы': "Y", 'Ь': "", 'Э': "E", 'Ю': "Yu", 'Я': "Ya",
+		// Kazakh specific
+		'ә': "a", 'ғ': "g", 'қ': "q", 'ң': "n", 'ө': "o", 'ұ': "u", 'ү': "u", 'һ': "h",
+		'Ә': "A", 'Ғ': "G", 'Қ': "Q", 'Ң': "N", 'Ө': "O", 'Ұ': "U", 'Ү': "U", 'Һ': "H",
+	}
+
+	var result strings.Builder
+	for _, r := range text {
+		if replacement, ok := translitMap[r]; ok {
+			result.WriteString(replacement)
+		} else if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			result.WriteRune(r)
+		} else if unicode.IsSpace(r) || r == '-' || r == '_' {
+			result.WriteRune('_')
+		}
+	}
+	return result.String()
+}
+
+// extractLastName extracts the last word (surname) from full name
+func extractLastName(fullName string) string {
+	parts := strings.Fields(strings.TrimSpace(fullName))
+	if len(parts) == 0 {
+		return "user"
+	}
+	// Возвращаем последнее слово (фамилию)
+	return parts[len(parts)-1]
+}
+
+// generateDriverLogin generates a unique login for driver based on surname
+func generateDriverLogin(db *gorm.DB, fullName string) (string, error) {
+	lastName := extractLastName(fullName)
+	transliterated := transliterate(strings.ToLower(lastName))
+	base := slugify(transliterated)
+	if base == "" {
+		base = "driver"
+	}
+	login := base
+	attempt := 1
+	for {
+		exists, err := userLoginExists(db, login, nil)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return login, nil
+		}
+		login = fmt.Sprintf("%s%d", base, attempt)
+		attempt++
+		if attempt > 1000 {
+			return "", fmt.Errorf("failed to generate unique login")
+		}
+	}
 }
 
 func generateRandomPassword(length int) (string, error) {
