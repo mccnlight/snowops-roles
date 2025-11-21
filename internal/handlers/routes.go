@@ -2117,25 +2117,43 @@ func transliterate(text string) string {
 	return result.String()
 }
 
-// extractLastName extracts the last word (surname) from full name
+// extractLastName extracts the first word (surname) from full name
+// In Russian/Kazakh format: Фамилия Имя Отчество (Surname Name Patronymic)
 func extractLastName(fullName string) string {
 	parts := strings.Fields(strings.TrimSpace(fullName))
 	if len(parts) == 0 {
 		return "user"
 	}
-	// Возвращаем последнее слово (фамилию)
-	return parts[len(parts)-1]
+	// Возвращаем первое слово (фамилию)
+	return parts[0]
 }
 
 // generateDriverLogin generates a unique login for driver based on surname
 func generateDriverLogin(db *gorm.DB, fullName string) (string, error) {
 	lastName := extractLastName(fullName)
-	transliterated := transliterate(strings.ToLower(lastName))
-	base := slugify(transliterated)
-	if base == "" {
-		base = "driver"
+	if lastName == "" || lastName == "user" {
+		lastName = "driver"
 	}
-	login := base
+
+	// Транслитерируем фамилию в латиницу (уже в нижнем регистре)
+	transliterated := transliterate(strings.ToLower(lastName))
+
+	// Очищаем от лишних символов, оставляя только латинские буквы и цифры
+	var base strings.Builder
+	for _, r := range transliterated {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			base.WriteRune(r)
+		} else if r == '_' || r == '-' {
+			// Пропускаем подчеркивания и дефисы
+		}
+	}
+
+	baseStr := strings.TrimSpace(base.String())
+	if baseStr == "" {
+		baseStr = "driver"
+	}
+
+	login := baseStr
 	attempt := 1
 	for {
 		exists, err := userLoginExists(db, login, nil)
@@ -2145,7 +2163,7 @@ func generateDriverLogin(db *gorm.DB, fullName string) (string, error) {
 		if !exists {
 			return login, nil
 		}
-		login = fmt.Sprintf("%s%d", base, attempt)
+		login = fmt.Sprintf("%s%d", baseStr, attempt)
 		attempt++
 		if attempt > 1000 {
 			return "", fmt.Errorf("failed to generate unique login")
