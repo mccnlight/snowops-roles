@@ -880,7 +880,14 @@ func DeleteOrganization(c *gin.Context) {
 		return
 	}
 
-	if err := tx.Model(&models.User{}).Where("organization_id = ?", org.ID).Update("is_active", false).Error; err != nil {
+	// Блокируем пользователей организации с причиной
+	blockReason := fmt.Sprintf("Организация '%s' была деактивирована", org.Name)
+	if err := tx.Model(&models.User{}).
+		Where("organization_id = ?", org.ID).
+		Updates(map[string]interface{}{
+			"is_active":    false,
+			"block_reason": blockReason,
+		}).Error; err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to deactivate organization users"})
 		return
@@ -901,7 +908,14 @@ func DeleteOrganization(c *gin.Context) {
 		}
 
 		if len(driverIDs) > 0 {
-			if err := tx.Model(&models.User{}).Where("driver_id IN ?", driverIDs).Update("is_active", false).Error; err != nil {
+			// Блокируем пользователей водителей с причиной
+			blockReason := fmt.Sprintf("Организация подрядчика '%s' была деактивирована", org.Name)
+			if err := tx.Model(&models.User{}).
+				Where("driver_id IN ?", driverIDs).
+				Updates(map[string]interface{}{
+					"is_active":    false,
+					"block_reason": blockReason,
+				}).Error; err != nil {
 				tx.Rollback()
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to deactivate driver users"})
 				return
@@ -977,13 +991,25 @@ func GetUser(c *gin.Context) {
 	}
 
 	var user models.User
-	if err := database.DB.Where("id = ? AND is_active = ?", targetUUID, true).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed"})
+	// Админы могут видеть заблокированных пользователей, обычные пользователи - только активных
+	if models.IsAdmin(role) {
+		if err := database.DB.Where("id = ?", targetUUID).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed"})
+			}
+			return
 		}
-		return
+	} else {
+		if err := database.DB.Where("id = ? AND is_active = ?", targetUUID, true).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed"})
+			}
+			return
+		}
 	}
 
 	currentUserUUID, err := uuid.Parse(currentUserID)
@@ -1070,6 +1096,8 @@ func UpdateUser(c *gin.Context) {
 		Role           *string    `json:"role"`
 		OrganizationID *uuid.UUID `json:"organization_id"`
 		DriverID       *uuid.UUID `json:"driver_id"`
+		IsActive       *bool      `json:"is_active"`
+		BlockReason    *string    `json:"block_reason"`
 	}
 
 	if err := c.BindJSON(&body); err != nil {
@@ -1118,6 +1146,32 @@ func UpdateUser(c *gin.Context) {
 	}
 	if body.DriverID != nil {
 		updateData["driver_id"] = *body.DriverID
+	}
+	if body.IsActive != nil {
+		updateData["is_active"] = *body.IsActive
+		// Если пользователь блокируется (IsActive = false), можно указать причину
+		// Если разблокируется (IsActive = true), очищаем причину блокировки
+		if !*body.IsActive {
+			if body.BlockReason != nil {
+				blockReason := strings.TrimSpace(*body.BlockReason)
+				if blockReason != "" {
+					updateData["block_reason"] = blockReason
+				} else {
+					updateData["block_reason"] = nil
+				}
+			}
+		} else {
+			// При разблокировке очищаем причину
+			updateData["block_reason"] = nil
+		}
+	} else if body.BlockReason != nil {
+		// Если IsActive не указан, но BlockReason указан, обновляем только причину
+		blockReason := strings.TrimSpace(*body.BlockReason)
+		if blockReason != "" {
+			updateData["block_reason"] = blockReason
+		} else {
+			updateData["block_reason"] = nil
+		}
 	}
 
 	if len(updateData) == 0 {

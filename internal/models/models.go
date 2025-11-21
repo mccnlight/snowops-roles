@@ -36,6 +36,7 @@ type User struct {
 	DriverID       *uuid.UUID    `gorm:"type:uuid"`
 	Driver         *Driver       `gorm:"foreignKey:DriverID;constraint:OnDelete:SET NULL"`
 	IsActive       bool          `gorm:"default:true"`
+	BlockReason    *string       `gorm:"type:text"` // Причина блокировки пользователя
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
