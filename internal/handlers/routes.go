@@ -137,12 +137,12 @@ func ListOrganizations(c *gin.Context) {
 	var orgs []models.Organization
 
 	switch role {
-	case models.RoleAkimatAdmin:
+	case models.RoleAkimatAdmin, models.RoleAkimatUser:
 		if err := database.DB.Where("is_active = ?", true).Find(&orgs).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch organizations"})
 			return
 		}
-	case models.RoleKguZkhAdmin:
+	case models.RoleKguZkhAdmin, models.RoleKguZkhUser:
 		var currentOrg models.Organization
 		if err := database.DB.Where("id = ? AND is_active = ?", currentOrgUUID, true).First(&currentOrg).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -162,7 +162,7 @@ func ListOrganizations(c *gin.Context) {
 		}
 
 		orgs = append(orgs, contractors...)
-	case models.RoleLandfillAdmin, models.RoleContractorAdmin:
+	case models.RoleLandfillAdmin, models.RoleLandfillUser, models.RoleContractorAdmin:
 		var currentOrg models.Organization
 		if err := database.DB.Where("id = ? AND is_active = ?", currentOrgUUID, true).First(&currentOrg).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -619,15 +619,15 @@ func GetOrganization(c *gin.Context) {
 	}
 
 	switch role {
-	case models.RoleAkimatAdmin:
-	case models.RoleKguZkhAdmin:
+	case models.RoleAkimatAdmin, models.RoleAkimatUser:
+	case models.RoleKguZkhAdmin, models.RoleKguZkhUser:
 		if org.ID != currentOrgUUID {
 			if !isManagedByKgu(org, currentOrgUUID) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
 		}
-	case models.RoleLandfillAdmin, models.RoleContractorAdmin:
+	case models.RoleLandfillAdmin, models.RoleLandfillUser, models.RoleContractorAdmin:
 		if org.ID != currentOrgUUID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
@@ -650,7 +650,7 @@ func PurgeOrganization(c *gin.Context) {
 	}
 
 	role := c.GetString("currentUserRole")
-	if !models.IsAkimatAdmin(role) {
+	if !models.IsAkimatAdmin(role) && role != models.RoleAkimatUser {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
@@ -725,15 +725,15 @@ func UpdateOrganization(c *gin.Context) {
 
 	// Проверка прав доступа
 	switch role {
-	case models.RoleAkimatAdmin:
-	case models.RoleKguZkhAdmin:
+	case models.RoleAkimatAdmin, models.RoleAkimatUser:
+	case models.RoleKguZkhAdmin, models.RoleKguZkhUser:
 		if org.ID != currentOrgUUID {
 			if !isManagedByKgu(org, currentOrgUUID) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
 		}
-	case models.RoleLandfillAdmin, models.RoleContractorAdmin:
+	case models.RoleLandfillAdmin, models.RoleLandfillUser, models.RoleContractorAdmin:
 		if org.ID != currentOrgUUID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
@@ -850,15 +850,15 @@ func DeleteOrganization(c *gin.Context) {
 	}
 
 	switch role {
-	case models.RoleAkimatAdmin:
-	case models.RoleKguZkhAdmin:
+	case models.RoleAkimatAdmin, models.RoleAkimatUser:
+	case models.RoleKguZkhAdmin, models.RoleKguZkhUser:
 		if org.ID != currentOrgUUID {
 			if !isManagedByKgu(org, currentOrgUUID) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
 		}
-	case models.RoleLandfillAdmin, models.RoleContractorAdmin:
+	case models.RoleLandfillAdmin, models.RoleLandfillUser, models.RoleContractorAdmin:
 		if org.ID != currentOrgUUID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
@@ -992,7 +992,7 @@ func GetUser(c *gin.Context) {
 
 	var user models.User
 	// Админы могут видеть заблокированных пользователей, обычные пользователи - только активных
-	if models.IsAdmin(role) {
+	if models.IsAdmin(role) || role == models.RoleAkimatUser || role == models.RoleKguZkhUser || role == models.RoleLandfillUser {
 		if err := database.DB.Where("id = ?", targetUUID).First(&user).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
@@ -1231,7 +1231,7 @@ func DeleteUser(c *gin.Context) {
 	}
 
 	withOrg := parseBool(c.Query("with_org"))
-	if withOrg && !models.IsAkimatAdmin(role) {
+	if withOrg && !models.IsAkimatAdmin(role) && role != models.RoleAkimatUser {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
@@ -1293,12 +1293,12 @@ func ListDrivers(c *gin.Context) {
 	var drivers []models.Driver
 
 	switch role {
-	case models.RoleAkimatAdmin:
+	case models.RoleAkimatAdmin, models.RoleAkimatUser:
 		if err := database.DB.Where("is_active = ?", true).Find(&drivers).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch drivers"})
 			return
 		}
-	case models.RoleKguZkhAdmin:
+	case models.RoleKguZkhAdmin, models.RoleKguZkhUser:
 		contractorIDs, err := contractorIDsForKgu(currentOrgUUID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve contractor organizations"})
@@ -1705,8 +1705,8 @@ func ListVehicles(c *gin.Context) {
 	}
 
 	switch role {
-	case models.RoleAkimatAdmin:
-	case models.RoleKguZkhAdmin:
+	case models.RoleAkimatAdmin, models.RoleAkimatUser:
+	case models.RoleKguZkhAdmin, models.RoleKguZkhUser:
 		currentOrgUUID, err := uuid.Parse(currentOrgID)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid current organization id"})
@@ -2021,14 +2021,14 @@ func onlyActiveEnabled(value string) bool {
 }
 
 func CanAccessVehicle(role, currentOrgID string, contractorID *uuid.UUID) bool {
-	if role == models.RoleAkimatAdmin {
+	if role == models.RoleAkimatAdmin || role == models.RoleAkimatUser {
 		return true
 	}
 	if contractorID == nil {
 		return false
 	}
 	switch role {
-	case models.RoleKguZkhAdmin:
+	case models.RoleKguZkhAdmin, models.RoleKguZkhUser:
 		return true
 	case models.RoleContractorAdmin:
 		return currentOrgID == contractorID.String()
@@ -2356,9 +2356,9 @@ func CanAccessDriver(role, currentOrgID, contractorOrgID string) bool {
 
 func canAccessUser(role string, currentOrgID uuid.UUID, user *models.User) bool {
 	switch role {
-	case models.RoleAkimatAdmin:
+	case models.RoleAkimatAdmin, models.RoleAkimatUser:
 		return true
-	case models.RoleKguZkhAdmin:
+	case models.RoleKguZkhAdmin, models.RoleKguZkhUser:
 		// allow users belonging to current KGU or its contractors
 		if user.OrganizationID != nil && *user.OrganizationID == currentOrgID {
 			return true
@@ -2374,7 +2374,7 @@ func canAccessUser(role string, currentOrgID uuid.UUID, user *models.User) bool 
 		if org.ParentOrgID != nil && *org.ParentOrgID == currentOrgID {
 			return true
 		}
-	case models.RoleLandfillAdmin, models.RoleContractorAdmin:
+	case models.RoleLandfillAdmin, models.RoleLandfillUser, models.RoleContractorAdmin:
 		if user.OrganizationID != nil && *user.OrganizationID == currentOrgID {
 			return true
 		}
