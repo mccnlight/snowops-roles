@@ -551,15 +551,44 @@ go run cmd/Snowops-roles/main.go
 #### PATCH /roles/vehicles/:id
 Изменить свойства транспорта или привязать водителя.
 
+**Входные данные:** ID в URL параметре, тело запроса (все поля опциональны):
+
 ```json
 {
+  "plate_number": "999ABC01",
+  "brand": "KamAZ",
+  "model": "6520",
   "color": "White",
+  "year": 2023,
   "body_volume_m3": 11.0,
-  "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1"   // пустая строка — чтобы отвязать
+  "photo_url": "https://cdn.example.com/trucks/999abc01.jpg",
+  "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1",  // пустая строка — чтобы отвязать
+  "is_active": true
 }
 ```
 
-Успешный ответ возвращает обновлённый объект.
+**Выходные данные:**
+```json
+{
+  "vehicle": {
+    "id": "0c0c4b4a-5b3e-4c39-b5e5-a3b19a2f1593",
+    "contractor_id": "2a1d0a26-7b3d-4132-8f2e-7acd2f4b0da8",
+    "plate_number": "999ABC01",
+    "brand": "KamAZ",
+    "model": "6520",
+    "color": "White",
+    "year": 2023,
+    "body_volume_m3": 11.0,
+    "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1",
+    "photo_url": "https://cdn.example.com/trucks/999abc01.jpg",
+    "is_active": true,
+    "created_at": "2025-01-10T07:30:00Z",
+    "updated_at": "2025-01-15T08:00:00Z"
+  }
+}
+```
+
+**Доступ:** Только `CONTRACTOR_ADMIN`
 
 #### DELETE /roles/vehicles/:id
 Soft-delete: `is_active = false`, привязанный водитель снимается. Доступ только у `CONTRACTOR_ADMIN`.
