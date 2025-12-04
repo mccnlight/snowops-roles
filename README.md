@@ -502,26 +502,33 @@ go run cmd/Snowops-roles/main.go
 {
   "vehicles": [
     {
-      "id": "0c0c4b4a-5b3e-4c39-b5e5-a3b19a2f1593",
-      "contractor_id": "2a1d0a26-7b3d-4132-8f2e-7acd2f4b0da8",
-      "plate_number": "777ABC01",
-      "brand": "KamAZ",
-      "model": "6520",
-      "color": "Orange",
-      "year": 2022,
-      "body_volume_m3": 12.5,
-      "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1",
-      "photo_url": "https://cdn.example.com/trucks/777abc01.jpg",
-      "is_active": true,
-      "created_at": "2025-01-10T07:30:00Z",
-      "updated_at": "2025-01-15T08:00:00Z"
+      "ID": "0c0c4b4a-5b3e-4c39-b5e5-a3b19a2f1593",
+      "ContractorID": "2a1d0a26-7b3d-4132-8f2e-7acd2f4b0da8",
+      "PlateNumber": "777ABC01",
+      "Brand": "KamAZ",
+      "Model": "6520",
+      "Color": "Orange",
+      "Year": 2022,
+      "BodyVolumeM3": 12.5,
+      "DriverID": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1",
+      "PhotoURL": "https://cdn.example.com/trucks/777abc01.jpg",
+      "IsActive": true,
+      "CreatedAt": "2025-01-10T07:30:00Z",
+      "UpdatedAt": "2025-01-15T08:00:00Z"
     }
   ]
 }
 ```
 
 #### POST /roles/vehicles
-Создаёт транспорт (только `CONTRACTOR_ADMIN`).
+Создаёт транспорт (только `CONTRACTOR_ADMIN`). Принимается **только файл** `photo` (multipart/form-data). Поле `photo_url` в запросе не поддерживается — итоговый URL вернётся в ответе после загрузки в R2.
+
+Как отправить с фронта (multipart/form-data):
+- Метод: `POST /roles/vehicles`
+- Headers: `Authorization: Bearer <jwt>`
+- Form-data поля:
+  - `plate_number`, `brand`, `model`, `color`, `year`, `body_volume_m3`, `driver_id` (опц.)
+  - `photo` — файл изображения (обязательно)
 
 ```json
 {
@@ -531,7 +538,6 @@ go run cmd/Snowops-roles/main.go
   "color": "Blue",
   "year": 2021,
   "body_volume_m3": 10.2,
-  "photo_url": "https://cdn.example.com/trucks/888xyz01.jpg",
   "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1"
 }
 ```
@@ -561,7 +567,7 @@ go run cmd/Snowops-roles/main.go
   "color": "White",
   "year": 2023,
   "body_volume_m3": 11.0,
-  "photo_url": "https://cdn.example.com/trucks/999abc01.jpg",
+  // фото можно обновить только файлом `photo` (multipart/form-data), передав его вместе с полями формы
   "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1",  // пустая строка — чтобы отвязать
   "is_active": true
 }
@@ -571,24 +577,29 @@ go run cmd/Snowops-roles/main.go
 ```json
 {
   "vehicle": {
-    "id": "0c0c4b4a-5b3e-4c39-b5e5-a3b19a2f1593",
-    "contractor_id": "2a1d0a26-7b3d-4132-8f2e-7acd2f4b0da8",
-    "plate_number": "999ABC01",
-    "brand": "KamAZ",
-    "model": "6520",
-    "color": "White",
-    "year": 2023,
-    "body_volume_m3": 11.0,
-    "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1",
-    "photo_url": "https://cdn.example.com/trucks/999abc01.jpg",
-    "is_active": true,
-    "created_at": "2025-01-10T07:30:00Z",
-    "updated_at": "2025-01-15T08:00:00Z"
+    "ID": "0c0c4b4a-5b3e-4c39-b5e5-a3b19a2f1593",
+    "ContractorID": "2a1d0a26-7b3d-4132-8f2e-7acd2f4b0da8",
+    "PlateNumber": "999ABC01",
+    "Brand": "KamAZ",
+    "Model": "6520",
+    "Color": "White",
+    "Year": 2023,
+    "BodyVolumeM3": 11.0,
+    "DriverID": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1",
+    "PhotoURL": "https://cdn.example.com/trucks/999abc01.jpg",
+    "IsActive": true,
+    "CreatedAt": "2025-01-10T07:30:00Z",
+    "UpdatedAt": "2025-01-15T08:00:00Z"
   }
 }
 ```
 
 **Доступ:** Только `CONTRACTOR_ADMIN`
+
+Как отправить файл при PATCH (multipart/form-data):
+- Метод: `PATCH /roles/vehicles/:id`
+- Headers: `Authorization: Bearer <jwt>`
+- Form-data: любые изменяемые поля (`plate_number`, `brand`, `model`, `color`, `year`, `body_volume_m3`, `driver_id`, `is_active`) + при необходимости файл `photo` (если нужно заменить фото; `photo_url` не передаётся). В ответе поля будут в CamelCase из моделей (`PhotoURL`, `CreatedAt`, и т.д.).
 
 #### DELETE /roles/vehicles/:id
 Soft-delete: `is_active = false`, привязанный водитель снимается. Доступ только у `CONTRACTOR_ADMIN`.
