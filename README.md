@@ -521,20 +521,20 @@ go run cmd/Snowops-roles/main.go
 ```
 
 #### POST /roles/vehicles
-Создаёт транспорт (только `CONTRACTOR_ADMIN`). Принимается **только файл** `photo` (multipart/form-data). Поле `photo_url` в запросе не поддерживается — итоговый URL вернётся в ответе после загрузки в R2.
+Создаёт транспорт (только `CONTRACTOR_ADMIN`). Принимается файл `photo` (multipart/form-data, опционально). Поле `photo_url` в запросе не поддерживается — итоговый URL вернётся в ответе после загрузки в R2.
 
-**Входные данные:** multipart/form-data (все поля обязательны, кроме `driver_id` и `is_active`):
+**Входные данные:** multipart/form-data (все поля обязательны, кроме `photo`, `driver_id` и `is_active`):
 - `plate_number` (string, обязательно)
 - `brand` (string, обязательно)
 - `model` (string, обязательно)
 - `color` (string, обязательно)
 - `year` (integer, обязательно)
 - `body_volume_m3` (float, обязательно)
-- `photo` (file, обязательно) — файл изображения (максимум 10MB)
+- `photo` (file, опционально) — файл изображения (максимум 10MB). Если не указан, фото будет `null`.
 - `driver_id` (string, UUID, опционально)
 - `is_active` (boolean, опционально, по умолчанию `true`)
 
-**Пример запроса (curl):**
+**Пример запроса (curl) - с фото:**
 ```bash
 curl -X POST http://localhost:7070/roles/vehicles \
   -H "Authorization: Bearer <jwt>" \
@@ -545,6 +545,18 @@ curl -X POST http://localhost:7070/roles/vehicles \
   -F "year=2021" \
   -F "body_volume_m3=10.2" \
   -F "photo=@/path/to/image.jpg"
+```
+
+**Пример запроса (curl) - без фото:**
+```bash
+curl -X POST http://localhost:7070/roles/vehicles \
+  -H "Authorization: Bearer <jwt>" \
+  -F "plate_number=888XYZ01" \
+  -F "brand=HOWO" \
+  -F "model=T5G" \
+  -F "color=Blue" \
+  -F "year=2021" \
+  -F "body_volume_m3=10.2"
 ```
 
 **Выходные данные:**

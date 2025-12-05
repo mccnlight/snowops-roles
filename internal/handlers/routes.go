@@ -1843,24 +1843,22 @@ func CreateVehicle(c *gin.Context) {
 	}
 
 	fileHeader, fileErr := c.FormFile("photo")
-	if errors.Is(fileErr, http.ErrMissingFile) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "photo file is required"})
-		return
-	}
-	if fileErr != nil {
+	if fileErr != nil && !errors.Is(fileErr, http.ErrMissingFile) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid photo file"})
 		return
 	}
-	uploadedURL, err := uploadVehiclePhoto(c.Request.Context(), fileHeader)
-	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, storage.ErrNotConfigured) {
-			status = http.StatusInternalServerError
+	if fileHeader != nil {
+		uploadedURL, err := uploadVehiclePhoto(c.Request.Context(), fileHeader)
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, storage.ErrNotConfigured) {
+				status = http.StatusInternalServerError
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
-		return
+		req.PhotoURL = uploadedURL
 	}
-	req.PhotoURL = uploadedURL
 
 	if req.Year <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "year must be positive"})
