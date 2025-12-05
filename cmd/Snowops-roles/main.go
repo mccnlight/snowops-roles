@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"os"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/MSTimX/Snowops-roles/internal/database"
 	"github.com/MSTimX/Snowops-roles/internal/handlers"
 	"github.com/MSTimX/Snowops-roles/internal/middleware"
+	"github.com/MSTimX/Snowops-roles/internal/storage"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -21,6 +23,14 @@ func main() {
 
 	database.Init()
 	database.Migrate()
+
+	r2Client, err := storage.NewR2ClientFromEnv()
+	if err != nil && !errors.Is(err, storage.ErrNotConfigured) {
+		log.Fatalf("failed to init r2 storage: %v", err)
+	}
+	if err != nil {
+		log.Printf("warning: R2 storage is not configured: %v", err)
+	}
 	port := os.Getenv("APP_PORT")
 	if port == "" {
 		port = "7070"
@@ -48,6 +58,7 @@ func main() {
 
 	rolesGroup := router.Group("/roles")
 	rolesGroup.Use(middleware.JWTAuthMiddleware())
+	handlers.SetStorageClient(r2Client)
 	handlers.RegisterRoutes(rolesGroup)
 
 	log.Printf("starting server on port %s", port)

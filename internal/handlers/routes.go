@@ -1,11 +1,15 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
+	"mime/multipart"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"unicode"
 
@@ -16,6 +20,7 @@ import (
 
 	"github.com/MSTimX/Snowops-roles/internal/database"
 	"github.com/MSTimX/Snowops-roles/internal/models"
+	"github.com/MSTimX/Snowops-roles/internal/storage"
 )
 
 type CreateOrganizationRequest struct {
@@ -45,27 +50,33 @@ type CreateDriverRequest struct {
 }
 
 type CreateVehicleRequest struct {
-	PlateNumber  string  `json:"plate_number" binding:"required"`
-	Brand        string  `json:"brand" binding:"required"`
-	Model        string  `json:"model" binding:"required"`
-	Color        string  `json:"color" binding:"required"`
-	Year         int     `json:"year" binding:"required"`
-	BodyVolumeM3 float64 `json:"body_volume_m3" binding:"required"`
-	PhotoURL     *string `json:"photo_url"`
-	DriverID     *string `json:"driver_id"`
-	IsActive     *bool   `json:"is_active"`
+	PlateNumber  string  `json:"plate_number" form:"plate_number" binding:"required"`
+	Brand        string  `json:"brand" form:"brand" binding:"required"`
+	Model        string  `json:"model" form:"model" binding:"required"`
+	Color        string  `json:"color" form:"color" binding:"required"`
+	Year         int     `json:"year" form:"year" binding:"required"`
+	BodyVolumeM3 float64 `json:"body_volume_m3" form:"body_volume_m3" binding:"required"`
+	PhotoURL     *string `json:"photo_url" form:"photo_url"` // user-supplied URL is not allowed; kept only to detect and reject
+	DriverID     *string `json:"driver_id" form:"driver_id"`
+	IsActive     *bool   `json:"is_active" form:"is_active"`
 }
 
 type UpdateVehicleRequest struct {
-	PlateNumber  *string  `json:"plate_number"`
-	Brand        *string  `json:"brand"`
-	Model        *string  `json:"model"`
-	Color        *string  `json:"color"`
-	Year         *int     `json:"year"`
-	BodyVolumeM3 *float64 `json:"body_volume_m3"`
-	PhotoURL     *string  `json:"photo_url"`
-	DriverID     *string  `json:"driver_id"`
-	IsActive     *bool    `json:"is_active"`
+	PlateNumber  *string  `json:"plate_number" form:"plate_number"`
+	Brand        *string  `json:"brand" form:"brand"`
+	Model        *string  `json:"model" form:"model"`
+	Color        *string  `json:"color" form:"color"`
+	Year         *int     `json:"year" form:"year"`
+	BodyVolumeM3 *float64 `json:"body_volume_m3" form:"body_volume_m3"`
+	PhotoURL     *string  `json:"photo_url" form:"photo_url"` // user-supplied URL is not allowed; kept only to detect and reject
+	DriverID     *string  `json:"driver_id" form:"driver_id"`
+	IsActive     *bool    `json:"is_active" form:"is_active"`
+}
+
+var vehicleStorageClient *storage.R2Client
+
+func SetStorageClient(client *storage.R2Client) {
+	vehicleStorageClient = client
 }
 
 // RegisterRoutes регистрирует HTTP-маршруты для API.
@@ -1743,6 +1754,59 @@ func ListVehicles(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"vehicles": vehicles})
 }
 
+const maxVehiclePhotoSize = int64(10 * 1024 * 1024)
+
+func uploadVehiclePhoto(ctx context.Context, fileHeader *multipart.FileHeader) (*string, error) {
+	if fileHeader == nil {
+		return nil, nil
+	}
+	if vehicleStorageClient == nil {
+		return nil, storage.ErrNotConfigured
+	}
+	if fileHeader.Size <= 0 {
+		return nil, fmt.Errorf("photo is empty")
+	}
+	if fileHeader.Size > maxVehiclePhotoSize {
+		return nil, fmt.Errorf("photo is too large, max 10MB")
+	}
+
+	contentType := strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+	if contentType == "" {
+		sniff, err := fileHeader.Open()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read photo: %w", err)
+		}
+		defer sniff.Close()
+		buf := make([]byte, 512)
+		if n, _ := sniff.Read(buf); n > 0 {
+			contentType = http.DetectContentType(buf[:n])
+		}
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if !strings.HasPrefix(contentType, "image/") {
+		return nil, fmt.Errorf("photo must be an image")
+	}
+
+	reader, err := fileHeader.Open()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open photo: %w", err)
+	}
+	defer reader.Close()
+
+	ext := strings.ToLower(filepath.Ext(fileHeader.Filename))
+	if ext == "" {
+		ext = ".bin"
+	}
+	key := fmt.Sprintf("vehicles/%s%s", uuid.NewString(), ext)
+	url, err := vehicleStorageClient.Upload(ctx, key, io.LimitReader(reader, maxVehiclePhotoSize), fileHeader.Size, contentType)
+	if err != nil {
+		return nil, err
+	}
+	return &url, nil
+}
+
 func CreateVehicle(c *gin.Context) {
 	role := c.GetString("currentUserRole")
 	currentOrgID := c.GetString("currentOrgID")
@@ -1769,10 +1833,34 @@ func CreateVehicle(c *gin.Context) {
 	}
 
 	var req CreateVehicleRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBind(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.PhotoURL != nil && strings.TrimSpace(*req.PhotoURL) != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "photo_url is not allowed, upload file in field 'photo'"})
+		return
+	}
+
+	fileHeader, fileErr := c.FormFile("photo")
+	if errors.Is(fileErr, http.ErrMissingFile) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "photo file is required"})
+		return
+	}
+	if fileErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid photo file"})
+		return
+	}
+	uploadedURL, err := uploadVehiclePhoto(c.Request.Context(), fileHeader)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, storage.ErrNotConfigured) {
+			status = http.StatusInternalServerError
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	req.PhotoURL = uploadedURL
 
 	if req.Year <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "year must be positive"})
@@ -1866,9 +1954,31 @@ func UpdateVehicle(c *gin.Context) {
 	}
 
 	var req UpdateVehicleRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBind(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if req.PhotoURL != nil && strings.TrimSpace(*req.PhotoURL) != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "photo_url is not allowed, upload file in field 'photo'"})
+		return
+	}
+
+	fileHeader, fileErr := c.FormFile("photo")
+	if fileErr != nil && !errors.Is(fileErr, http.ErrMissingFile) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid photo file"})
+		return
+	}
+	if fileHeader != nil {
+		uploadedURL, err := uploadVehiclePhoto(c.Request.Context(), fileHeader)
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, storage.ErrNotConfigured) {
+				status = http.StatusInternalServerError
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+		req.PhotoURL = uploadedURL
 	}
 
 	updates := map[string]interface{}{}
