@@ -104,7 +104,7 @@ func (r *R2Client) Upload(ctx context.Context, key string, body io.Reader, size 
 func (r *R2Client) objectURL(key string) string {
 	trimmedKey := strings.TrimLeft(key, "/")
 	if r.publicBaseURL != "" {
-		return fmt.Sprintf("%s/%s", r.publicBaseURL, trimmedKey)
+		return fmt.Sprintf("%s/%s/%s", r.publicBaseURL, r.bucket, trimmedKey)
 	}
 	return fmt.Sprintf("%s/%s/%s", r.endpoint, r.bucket, trimmedKey)
 }
