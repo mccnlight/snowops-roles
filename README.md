@@ -511,7 +511,7 @@ go run cmd/Snowops-roles/main.go
       "Year": 2022,
       "BodyVolumeM3": 12.5,
       "DriverID": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1",
-      "PhotoURL": "https://cdn.example.com/trucks/777abc01.jpg",
+      "PhotoURL": "https://pub-xxx.r2.dev/snowops-files/vehicles/uuid.png",
       "IsActive": true,
       "CreatedAt": "2025-01-10T07:30:00Z",
       "UpdatedAt": "2025-01-15T08:00:00Z"
@@ -523,30 +523,47 @@ go run cmd/Snowops-roles/main.go
 #### POST /roles/vehicles
 Создаёт транспорт (только `CONTRACTOR_ADMIN`). Принимается **только файл** `photo` (multipart/form-data). Поле `photo_url` в запросе не поддерживается — итоговый URL вернётся в ответе после загрузки в R2.
 
-Как отправить с фронта (multipart/form-data):
-- Метод: `POST /roles/vehicles`
-- Headers: `Authorization: Bearer <jwt>`
-- Form-data поля:
-  - `plate_number`, `brand`, `model`, `color`, `year`, `body_volume_m3`, `driver_id` (опц.)
-  - `photo` — файл изображения (обязательно)
+**Входные данные:** multipart/form-data (все поля обязательны, кроме `driver_id` и `is_active`):
+- `plate_number` (string, обязательно)
+- `brand` (string, обязательно)
+- `model` (string, обязательно)
+- `color` (string, обязательно)
+- `year` (integer, обязательно)
+- `body_volume_m3` (float, обязательно)
+- `photo` (file, обязательно) — файл изображения (максимум 10MB)
+- `driver_id` (string, UUID, опционально)
+- `is_active` (boolean, опционально, по умолчанию `true`)
 
-```json
-{
-  "plate_number": "888XYZ01",
-  "brand": "HOWO",
-  "model": "T5G",
-  "color": "Blue",
-  "year": 2021,
-  "body_volume_m3": 10.2,
-  "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1"
-}
+**Пример запроса (curl):**
+```bash
+curl -X POST http://localhost:7070/roles/vehicles \
+  -H "Authorization: Bearer <jwt>" \
+  -F "plate_number=888XYZ01" \
+  -F "brand=HOWO" \
+  -F "model=T5G" \
+  -F "color=Blue" \
+  -F "year=2021" \
+  -F "body_volume_m3=10.2" \
+  -F "photo=@/path/to/image.jpg"
 ```
 
+**Выходные данные:**
 ```json
 {
   "vehicle": {
-    "id": "dd9f1a44-54a0-4c7b-9a40-0c59f4b91d2a",
-    "...": "..."
+    "ID": "dd9f1a44-54a0-4c7b-9a40-0c59f4b91d2a",
+    "ContractorID": "2a1d0a26-7b3d-4132-8f2e-7acd2f4b0da8",
+    "PlateNumber": "888XYZ01",
+    "Brand": "HOWO",
+    "Model": "T5G",
+    "Color": "Blue",
+    "Year": 2021,
+    "BodyVolumeM3": 10.2,
+    "PhotoURL": "https://pub-xxx.r2.dev/snowops-files/vehicles/uuid.jpg",
+    "DriverID": null,
+    "IsActive": true,
+    "CreatedAt": "2025-01-15T10:30:00Z",
+    "UpdatedAt": "2025-01-15T10:30:00Z"
   }
 }
 ```
@@ -557,20 +574,32 @@ go run cmd/Snowops-roles/main.go
 #### PATCH /roles/vehicles/:id
 Изменить свойства транспорта или привязать водителя.
 
-**Входные данные:** ID в URL параметре, тело запроса (все поля опциональны):
+**Входные данные:** ID в URL параметре, тело запроса multipart/form-data (все поля опциональны):
+- `plate_number` (string, опционально)
+- `brand` (string, опционально)
+- `model` (string, опционально)
+- `color` (string, опционально)
+- `year` (integer, опционально)
+- `body_volume_m3` (float, опционально)
+- `photo` (file, опционально) — файл изображения для замены фото (максимум 10MB). Если не указан, фото останется прежним.
+- `driver_id` (string, UUID, опционально) — пустая строка для отвязки водителя
+- `is_active` (boolean, опционально)
 
-```json
-{
-  "plate_number": "999ABC01",
-  "brand": "KamAZ",
-  "model": "6520",
-  "color": "White",
-  "year": 2023,
-  "body_volume_m3": 11.0,
-  // фото можно обновить только файлом `photo` (multipart/form-data), передав его вместе с полями формы
-  "driver_id": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1",  // пустая строка — чтобы отвязать
-  "is_active": true
-}
+**Важно:** Фото можно обновить только файлом `photo` (multipart/form-data). Поле `photo_url` в запросе не поддерживается.
+
+**Пример запроса (curl) - обновление только цвета:**
+```bash
+curl -X PATCH http://localhost:7070/roles/vehicles/{vehicle-id} \
+  -H "Authorization: Bearer <jwt>" \
+  -F "color=White"
+```
+
+**Пример запроса (curl) - обновление цвета и фото:**
+```bash
+curl -X PATCH http://localhost:7070/roles/vehicles/{vehicle-id} \
+  -H "Authorization: Bearer <jwt>" \
+  -F "color=White" \
+  -F "photo=@/path/to/new-image.jpg"
 ```
 
 **Выходные данные:**
@@ -586,7 +615,7 @@ go run cmd/Snowops-roles/main.go
     "Year": 2023,
     "BodyVolumeM3": 11.0,
     "DriverID": "ae7f5f3a-1a3f-4c90-b8d1-819ffffff0a1",
-    "PhotoURL": "https://cdn.example.com/trucks/999abc01.jpg",
+    "PhotoURL": "https://pub-xxx.r2.dev/snowops-files/vehicles/uuid.jpg",
     "IsActive": true,
     "CreatedAt": "2025-01-10T07:30:00Z",
     "UpdatedAt": "2025-01-15T08:00:00Z"
@@ -595,11 +624,6 @@ go run cmd/Snowops-roles/main.go
 ```
 
 **Доступ:** Только `CONTRACTOR_ADMIN`
-
-Как отправить файл при PATCH (multipart/form-data):
-- Метод: `PATCH /roles/vehicles/:id`
-- Headers: `Authorization: Bearer <jwt>`
-- Form-data: любые изменяемые поля (`plate_number`, `brand`, `model`, `color`, `year`, `body_volume_m3`, `driver_id`, `is_active`) + при необходимости файл `photo` (если нужно заменить фото; `photo_url` не передаётся). В ответе поля будут в CamelCase из моделей (`PhotoURL`, `CreatedAt`, и т.д.).
 
 #### DELETE /roles/vehicles/:id
 Soft-delete: `is_active = false`, привязанный водитель снимается. Доступ только у `CONTRACTOR_ADMIN`.
