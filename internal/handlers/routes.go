@@ -1869,9 +1869,26 @@ func CreateVehicle(c *gin.Context) {
 		return
 	}
 
+	plateNumber := strings.TrimSpace(req.PlateNumber)
+	if plateNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "plate_number is required"})
+		return
+	}
+
+	// Check if plate number already exists
+	inUse, err := vehiclePlateNumberExists(database.DB, plateNumber, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate plate number"})
+		return
+	}
+	if inUse {
+		c.JSON(http.StatusConflict, gin.H{"error": "vehicle with this plate number already exists"})
+		return
+	}
+
 	vehicle := models.Vehicle{
 		ContractorID: &contractorUUID,
-		PlateNumber:  strings.TrimSpace(req.PlateNumber),
+		PlateNumber:  plateNumber,
 		Brand:        strings.TrimSpace(req.Brand),
 		Model:        strings.TrimSpace(req.Model),
 		Color:        strings.TrimSpace(req.Color),
@@ -2186,6 +2203,21 @@ func userLoginExists(db *gorm.DB, login string, excludeID *uuid.UUID) (bool, err
 		return false, nil
 	}
 	query := db.Model(&models.User{}).Where("login = ?", login)
+	if excludeID != nil {
+		query = query.Where("id <> ?", *excludeID)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func vehiclePlateNumberExists(db *gorm.DB, plateNumber string, excludeID *uuid.UUID) (bool, error) {
+	if plateNumber == "" {
+		return false, nil
+	}
+	query := db.Model(&models.Vehicle{}).Where("plate_number = ?", plateNumber)
 	if excludeID != nil {
 		query = query.Where("id <> ?", *excludeID)
 	}
