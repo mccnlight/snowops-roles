@@ -1875,17 +1875,77 @@ func CreateVehicle(c *gin.Context) {
 		return
 	}
 
-	// Check if plate number already exists
-	inUse, err := vehiclePlateNumberExists(database.DB, plateNumber, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate plate number"})
+	// Check if vehicle with this plate number already exists
+	var existingVehicle models.Vehicle
+	err = database.DB.Where("plate_number = ?", plateNumber).First(&existingVehicle).Error
+
+	if err == nil {
+		// Vehicle exists - check if it belongs to a different company
+		if existingVehicle.ContractorID != nil && *existingVehicle.ContractorID == contractorUUID {
+			// Same company trying to add same vehicle
+			c.JSON(http.StatusConflict, gin.H{"error": "vehicle with this plate number already exists in your organization"})
+			return
+		}
+
+		// Vehicle exists but belongs to different company (or no company) - transfer it
+		existingVehicle.ContractorID = &contractorUUID
+
+		// Update required fields (Brand, Model, Color, Year, BodyVolumeM3 are always provided)
+		existingVehicle.Brand = strings.TrimSpace(req.Brand)
+		existingVehicle.Model = strings.TrimSpace(req.Model)
+		existingVehicle.Color = strings.TrimSpace(req.Color)
+		existingVehicle.Year = req.Year
+		existingVehicle.BodyVolumeM3 = req.BodyVolumeM3
+
+		// Only update IsActive if explicitly provided
+		if req.IsActive != nil {
+			existingVehicle.IsActive = *req.IsActive
+		}
+
+		// Only update PhotoURL if a new photo was uploaded
+		if req.PhotoURL != nil {
+			existingVehicle.PhotoURL = normalizeOptionalString(req.PhotoURL)
+		}
+
+		// Preserve existing driver unless a new one is provided
+		// If new driver is provided, clear the old one first (will be assigned below)
+		if req.DriverID != nil && strings.TrimSpace(*req.DriverID) != "" {
+			existingVehicle.DriverID = nil
+		}
+		// Otherwise, keep existing driver assignment
+
+		if err := database.DB.Save(&existingVehicle).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to transfer vehicle"})
+			return
+		}
+
+		// Reload vehicle with relationships
+		if err := database.DB.Where("id = ?", existingVehicle.ID).First(&existingVehicle).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reload vehicle"})
+			return
+		}
+
+		// Assign new driver if provided
+		if req.DriverID != nil && strings.TrimSpace(*req.DriverID) != "" {
+			if err := assignDriverToVehicle(&existingVehicle, strings.TrimSpace(*req.DriverID)); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if err := database.DB.Where("id = ?", existingVehicle.ID).First(&existingVehicle).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reload vehicle"})
+				return
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{"vehicle": existingVehicle, "message": "vehicle transferred from another organization"})
 		return
-	}
-	if inUse {
-		c.JSON(http.StatusConflict, gin.H{"error": "vehicle with this plate number already exists"})
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		// Database error (not just "not found")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check for existing vehicle"})
 		return
 	}
 
+	// Vehicle doesn't exist - proceed with normal creation
 	vehicle := models.Vehicle{
 		ContractorID: &contractorUUID,
 		PlateNumber:  plateNumber,
